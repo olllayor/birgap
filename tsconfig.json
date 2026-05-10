@@ -15,5 +15,6 @@
     "skipLibCheck": true,
     "strictPropertyInitialization": false,
     "noImplicitAny": false
-  }
+  },
+  "exclude": ["ui-lab", "node_modules", "dist"]
 }
