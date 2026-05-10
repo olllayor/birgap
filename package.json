@@ -1,0 +1,81 @@
+{
+  "name": "birgap-backend",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Backend foundation for BirGap chat-only E2EE-ready messenger.",
+  "license": "UNLICENSED",
+  "packageManager": "pnpm@10.33.0",
+  "scripts": {
+    "build": "nest build",
+    "start": "nest start",
+    "start:dev": "nest start --watch",
+    "start:prod": "node dist/main.js",
+    "lint": "eslint \"src/**/*.ts\" \"test/**/*.ts\" --no-error-on-unmatched-pattern",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:cov": "jest --coverage",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate dev",
+    "prisma:deploy": "prisma migrate deploy",
+    "prisma:seed": "tsx prisma/seed.ts"
+  },
+  "dependencies": {
+    "@nestjs/common": "^10.4.15",
+    "@nestjs/config": "^3.3.0",
+    "@nestjs/core": "^10.4.15",
+    "@nestjs/event-emitter": "^3.0.1",
+    "@nestjs/jwt": "^10.2.0",
+    "@nestjs/platform-express": "^10.4.15",
+    "@nestjs/platform-socket.io": "^10.4.15",
+    "@nestjs/swagger": "^8.1.0",
+    "@nestjs/websockets": "^10.4.15",
+    "@prisma/client": "^6.1.0",
+    "bcryptjs": "^2.4.3",
+    "class-transformer": "^0.5.1",
+    "class-validator": "^0.14.1",
+    "ioredis": "^5.4.2",
+    "joi": "^17.13.3",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.1",
+    "socket.io": "^4.8.1",
+    "swagger-ui-express": "^5.0.1"
+  },
+  "devDependencies": {
+    "@nestjs/cli": "^10.4.8",
+    "@nestjs/schematics": "^10.2.3",
+    "@nestjs/testing": "^10.4.15",
+    "@types/bcryptjs": "^2.4.6",
+    "@types/express": "^5.0.0",
+    "@types/jest": "^29.5.14",
+    "@types/node": "^22.10.2",
+    "@types/supertest": "^6.0.2",
+    "@typescript-eslint/eslint-plugin": "^8.18.1",
+    "@typescript-eslint/parser": "^8.18.1",
+    "eslint": "^9.17.0",
+    "jest": "^29.7.0",
+    "prisma": "^6.1.0",
+    "source-map-support": "^0.5.21",
+    "supertest": "^7.0.0",
+    "ts-jest": "^29.2.5",
+    "ts-loader": "^9.5.1",
+    "ts-node": "^10.9.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  },
+  "jest": {
+    "moduleFileExtensions": [
+      "js",
+      "json",
+      "ts"
+    ],
+    "rootDir": ".",
+    "testRegex": ".*\\.spec\\.ts$",
+    "transform": {
+      "^.+\\.(t|j)s$": "ts-jest"
+    },
+    "collectCoverageFrom": [
+      "src/**/*.(t|j)s"
+    ],
+    "testEnvironment": "node"
+  }
+}

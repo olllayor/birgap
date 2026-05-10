@@ -1,0 +1,106 @@
+import { ForbiddenException, Injectable, UnauthorizedException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { JwtService } from '@nestjs/jwt';
+import { PrismaService } from '../prisma/prisma.service';
+import { AuthenticatedUser } from '../common/types/authenticated-user';
+import { maskPhone, normalizePhone, randomToken, sha256 } from '../common/utils/crypto.util';
+import { RequestOtpDto } from './dto/request-otp.dto';
+import { VerifyOtpDto } from './dto/verify-otp.dto';
+
+@Injectable()
+export class AuthService {
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly jwtService: JwtService,
+    private readonly config: ConfigService,
+  ) {}
+
+  async requestOtp(dto: RequestOtpDto) {
+    const phone = normalizePhone(dto.phone);
+    return {
+      phone: maskPhone(phone),
+      mode: this.config.get<string>('OTP_MODE'),
+      expiresInSeconds: this.config.get<number>('OTP_TTL_SECONDS') ?? 300,
+    };
+  }
+
+  async verifyOtp(dto: VerifyOtpDto) {
+    const expectedCode = this.config.get<string>('OTP_MOCK_CODE') ?? '000000';
+    if (dto.code !== expectedCode) {
+      throw new ForbiddenException('Invalid OTP code');
+    }
+
+    const phone = normalizePhone(dto.phone);
+    const user = await this.prisma.user.upsert({
+      where: { phoneHash: sha256(phone) },
+      update: { phoneMasked: maskPhone(phone) },
+      create: {
+        phoneHash: sha256(phone),
+        phoneMasked: maskPhone(phone),
+      },
+    });
+
+    return this.issueTokenPair(user.id);
+  }
+
+  async refresh(refreshToken: string) {
+    const tokenHash = sha256(refreshToken);
+    const session = await this.prisma.refreshToken.findUnique({
+      where: { tokenHash },
+      select: { id: true, userId: true, expiresAt: true, revokedAt: true },
+    });
+
+    if (!session || session.revokedAt || session.expiresAt <= new Date()) {
+      throw new UnauthorizedException('Refresh token is invalid');
+    }
+
+    await this.prisma.refreshToken.update({
+      where: { id: session.id },
+      data: { revokedAt: new Date() },
+    });
+
+    return this.issueTokenPair(session.userId);
+  }
+
+  async logout(user: AuthenticatedUser, refreshToken?: string) {
+    if (refreshToken) {
+      await this.prisma.refreshToken.updateMany({
+        where: {
+          tokenHash: sha256(refreshToken),
+          userId: user.userId,
+          revokedAt: null,
+        },
+        data: { revokedAt: new Date() },
+      });
+      return;
+    }
+
+    await this.prisma.refreshToken.updateMany({
+      where: { id: user.sessionId, userId: user.userId, revokedAt: null },
+      data: { revokedAt: new Date() },
+    });
+  }
+
+  private async issueTokenPair(userId: string) {
+    const refreshToken = randomToken(48);
+    const refreshTokenTtlDays = this.config.get<number>('REFRESH_TOKEN_TTL_DAYS') ?? 30;
+    const session = await this.prisma.refreshToken.create({
+      data: {
+        userId,
+        tokenHash: sha256(refreshToken),
+        expiresAt: new Date(Date.now() + refreshTokenTtlDays * 24 * 60 * 60 * 1000),
+      },
+    });
+
+    const accessToken = await this.jwtService.signAsync({
+      sub: userId,
+      sid: session.id,
+    });
+
+    return {
+      user: { id: userId },
+      accessToken,
+      refreshToken,
+    };
+  }
+}

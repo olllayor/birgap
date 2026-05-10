@@ -1,0 +1,192 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+}
+
+enum DevicePlatform {
+  ANDROID
+  IOS
+  WEB
+}
+
+enum PushPlatform {
+  FCM
+  APNS
+  HMS
+}
+
+enum EnvelopeStatus {
+  PENDING
+  DELIVERED
+  READ
+}
+
+model User {
+  id          String     @id @default(uuid()) @db.Uuid
+  phoneHash   String     @unique
+  phoneMasked String?
+  status      UserStatus @default(ACTIVE)
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  devices       Device[]
+  refreshTokens RefreshToken[]
+  sentMessages  Message[]      @relation("SentMessages")
+  backups       BackupBlob[]
+}
+
+model Device {
+  id                String         @id @default(uuid()) @db.Uuid
+  userId            String         @db.Uuid
+  platform          DevicePlatform
+  displayName       String?
+  identityPublicKey String
+  pushToken         String?
+  pushPlatform      PushPlatform?
+  pushActive        Boolean        @default(false)
+  active            Boolean        @default(true)
+  lastSeenAt        DateTime?
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+
+  user              User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  signedPrekeys     SignedPrekey[]
+  oneTimePrekeys    OneTimePrekey[]
+  sentMessages      Message[]        @relation("SenderDeviceMessages")
+  receivedEnvelopes MessageEnvelope[] @relation("RecipientDeviceEnvelopes")
+  socketTickets     SocketTicket[]
+
+  @@index([userId, active])
+}
+
+model SignedPrekey {
+  id        String   @id @default(uuid()) @db.Uuid
+  deviceId  String   @db.Uuid
+  keyId     Int
+  publicKey String
+  signature String
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  device Device @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+
+  @@index([deviceId, active])
+  @@unique([deviceId, keyId])
+}
+
+model OneTimePrekey {
+  id         String    @id @default(uuid()) @db.Uuid
+  deviceId   String    @db.Uuid
+  keyId      Int
+  publicKey  String
+  consumedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  device Device @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+
+  @@unique([deviceId, keyId])
+  @@index([deviceId, consumedAt])
+}
+
+model DirectThread {
+  id             String   @id @default(uuid()) @db.Uuid
+  userAId        String   @db.Uuid
+  userBId        String   @db.Uuid
+  latestSequence Int      @default(0)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  messages Message[]
+
+  @@unique([userAId, userBId])
+}
+
+model Message {
+  id             String   @id @default(uuid()) @db.Uuid
+  threadId       String   @db.Uuid
+  senderUserId   String   @db.Uuid
+  senderDeviceId String   @db.Uuid
+  idempotencyKey String
+  threadSequence Int
+  createdAt      DateTime @default(now())
+
+  thread       DirectThread     @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  sender       User             @relation("SentMessages", fields: [senderUserId], references: [id], onDelete: Cascade)
+  senderDevice Device           @relation("SenderDeviceMessages", fields: [senderDeviceId], references: [id], onDelete: Restrict)
+  envelopes    MessageEnvelope[]
+
+  @@unique([senderDeviceId, idempotencyKey])
+  @@unique([threadId, threadSequence])
+  @@index([threadId, threadSequence])
+}
+
+model MessageEnvelope {
+  id                String         @id @default(uuid()) @db.Uuid
+  messageId         String         @db.Uuid
+  recipientUserId   String         @db.Uuid
+  recipientDeviceId String         @db.Uuid
+  ciphertext        Json
+  status            EnvelopeStatus @default(PENDING)
+  deliveredAt       DateTime?
+  readAt            DateTime?
+  createdAt         DateTime       @default(now())
+
+  message         Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  recipientDevice Device  @relation("RecipientDeviceEnvelopes", fields: [recipientDeviceId], references: [id], onDelete: Restrict)
+
+  @@unique([messageId, recipientDeviceId])
+  @@index([recipientDeviceId, status])
+}
+
+model RefreshToken {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @db.Uuid
+  tokenHash String    @unique
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, revokedAt])
+}
+
+model SocketTicket {
+  id          String    @id @default(uuid()) @db.Uuid
+  userId      String    @db.Uuid
+  deviceId    String    @db.Uuid
+  sessionId   String    @db.Uuid
+  tokenHash   String    @unique
+  expiresAt   DateTime
+  consumedAt  DateTime?
+  consumedBy  String?
+  createdAt   DateTime  @default(now())
+
+  device Device @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+
+  @@index([userId, deviceId, expiresAt])
+}
+
+model BackupBlob {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @db.Uuid
+  version   Int
+  blob      String
+  checksum  String
+  sizeBytes Int
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId])
+}
