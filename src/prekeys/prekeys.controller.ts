@@ -1,4 +1,4 @@
-import { Body, Controller, Param, Post, Put, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Put, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
@@ -13,6 +13,14 @@ import { PreKeysService } from './prekeys.service';
 @Controller('devices/:deviceId')
 export class PreKeysController {
   constructor(private readonly preKeysService: PreKeysService) {}
+
+  @Get('prekeys/count')
+  getCount(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('deviceId') deviceId: string,
+  ) {
+    return this.preKeysService.getCount(user.userId, deviceId);
+  }
 
   @Post('prekeys/refill')
   refill(

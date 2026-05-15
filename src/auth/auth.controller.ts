@@ -1,4 +1,5 @@
 import { Body, Controller, HttpCode, Post, UseGuards } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
@@ -14,18 +15,21 @@ import { VerifyOtpDto } from './dto/verify-otp.dto';
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
+  @Throttle({ auth: { limit: 5, ttl: 60_000 } })
   @Post('otp/request')
   @HttpCode(202)
   requestOtp(@Body() dto: RequestOtpDto) {
     return this.authService.requestOtp(dto);
   }
 
+  @Throttle({ auth: { limit: 5, ttl: 60_000 } })
   @Post('otp/verify')
   @HttpCode(200)
   verifyOtp(@Body() dto: VerifyOtpDto) {
     return this.authService.verifyOtp(dto);
   }
 
+  @Throttle({ auth: { limit: 5, ttl: 60_000 } })
   @Post('refresh')
   @HttpCode(200)
   refresh(@Body() dto: RefreshTokenDto) {

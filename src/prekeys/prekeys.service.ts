@@ -22,6 +22,26 @@ export class PreKeysService {
     return { inserted: result.count };
   }
 
+  async getCount(userId: string, deviceId: string) {
+    await this.assertDeviceOwner(userId, deviceId);
+
+    const [oneTimeCount, hasSignedPrekey] = await Promise.all([
+      this.prisma.oneTimePrekey.count({
+        where: { deviceId, consumedAt: null },
+      }),
+      this.prisma.signedPrekey.count({
+        where: { deviceId, active: true },
+      }),
+    ]);
+
+    return {
+      deviceId,
+      oneTimePrekeysRemaining: oneTimeCount,
+      hasActiveSignedPrekey: hasSignedPrekey > 0,
+      lowWatermark: oneTimeCount < 10,
+    };
+  }
+
   async rotateSignedPrekey(userId: string, deviceId: string, dto: RotateSignedPrekeyDto) {
     await this.assertDeviceOwner(userId, deviceId);
 
