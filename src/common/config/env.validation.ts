@@ -17,6 +17,12 @@ export const envValidationSchema = Joi.object({
   SIGNED_PREKEY_ROTATION_DAYS: Joi.number().default(7),
   PUSH_PROVIDER: Joi.string().valid('logger', 'fcm').default('logger'),
   FCM_SERVICE_ACCOUNT_JSON: Joi.string().allow('').optional(),
+  R2_ENDPOINT: Joi.string().required(),
+  R2_ACCESS_KEY_ID: Joi.string().required(),
+  R2_SECRET_ACCESS_KEY: Joi.string().required(),
+  R2_BUCKET_NAME: Joi.string().default('birgap-backups'),
+  R2_PRESIGNED_PUT_TTL_SECONDS: Joi.number().default(900),
+  R2_PRESIGNED_GET_TTL_SECONDS: Joi.number().default(300),
   APNS_TEAM_ID: Joi.string().allow('').optional(),
   HMS_APP_ID: Joi.string().allow('').optional(),
 });

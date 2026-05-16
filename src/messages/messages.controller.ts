@@ -22,7 +22,7 @@ export class MessagesController {
 
   @Get('pending')
   getPending(@CurrentUser() user: AuthenticatedUser, @Query() query: PendingQueryDto) {
-    return this.messagesService.getPending(user.userId, query.deviceId);
+    return this.messagesService.getPending(user.userId, query.deviceId, query.after, query.limit);
   }
 
   @Post(':messageId/ack')

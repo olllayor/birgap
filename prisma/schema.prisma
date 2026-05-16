@@ -138,6 +138,7 @@ model MessageEnvelope {
   status            EnvelopeStatus @default(PENDING)
   deliveredAt       DateTime?
   readAt            DateTime?
+  envelopeSequence  BigInt         @default(autoincrement())
   createdAt         DateTime       @default(now())
 
   message         Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
@@ -145,6 +146,7 @@ model MessageEnvelope {
 
   @@unique([messageId, recipientDeviceId])
   @@index([recipientDeviceId, status])
+  @@index([recipientDeviceId, envelopeSequence])
 }
 
 model RefreshToken {
@@ -177,16 +179,13 @@ model SocketTicket {
 }
 
 model BackupBlob {
-  id        String   @id @default(uuid()) @db.Uuid
-  userId    String   @db.Uuid
-  version   Int
-  blob      String
-  checksum  String
-  sizeBytes Int
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id         String   @id @default(uuid()) @db.Uuid
+  userId     String   @unique @db.Uuid
+  bucketKey  String
+  sha256     String
+  sizeBytes  Int
+  version    Int
+  uploadedAt DateTime @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@unique([userId])
 }

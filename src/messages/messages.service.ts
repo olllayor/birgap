@@ -138,15 +138,17 @@ export class MessagesService {
     }
   }
 
-  async getPending(userId: string, deviceId: string) {
+  async getPending(userId: string, deviceId: string, after?: string, limit = 50) {
     await this.assertActiveDevice(userId, deviceId);
 
     const envelopes = await this.prisma.messageEnvelope.findMany({
       where: {
         recipientDeviceId: deviceId,
         status: { in: ['PENDING', 'DELIVERED'] },
+        ...(after && { envelopeSequence: { gt: BigInt(after) } }),
       },
-      orderBy: [{ message: { threadSequence: 'asc' } }, { createdAt: 'asc' }],
+      orderBy: { envelopeSequence: 'asc' },
+      take: limit,
       include: {
         message: {
           select: {
@@ -161,7 +163,11 @@ export class MessagesService {
       },
     });
 
-    return { deviceId, envelopes };
+    return {
+      deviceId,
+      envelopes,
+      hasMore: envelopes.length === limit,
+    };
   }
 
   async ack(userId: string, messageId: string, dto: AckMessageDto) {

@@ -327,15 +327,21 @@ Use `threadSequence` for final message ordering inside a direct chat. The client
 
 ### Fetch Pending Messages
 
-`GET /messages/pending?deviceId=<device-uuid>`
+`GET /messages/pending?deviceId=<device-uuid>&after=<cursor>&limit=50`
 
 Protected endpoint. Device must belong to the current user.
 
-Returns pending and delivered-but-not-read envelopes for one device, ordered by `threadSequence`.
+Query parameters:
+- `deviceId` (required): The device UUID
+- `after` (optional): Cursor from a previous response. Omit to fetch from the beginning.
+- `limit` (optional, default 50, max 200): Max envelopes per page
+
+Returns pending and delivered-but-not-read envelopes for one device, ordered by `envelopeSequence` (global insertion order). The response includes `hasMore` to indicate whether another page exists.
 
 ```json
 {
   "deviceId": "device-uuid",
+  "hasMore": true,
   "envelopes": [
     {
       "id": "envelope-uuid",
@@ -349,6 +355,7 @@ Returns pending and delivered-but-not-read envelopes for one device, ordered by 
       "status": "PENDING",
       "deliveredAt": null,
       "readAt": null,
+      "envelopeSequence": "142",
       "createdAt": "2026-05-10T12:00:00.000Z",
       "message": {
         "id": "message-uuid",
@@ -363,7 +370,20 @@ Returns pending and delivered-but-not-read envelopes for one device, ordered by 
 }
 ```
 
-Call this after login, after WebSocket reconnect, and after receiving a push wakeup.
+Call this after login, after WebSocket reconnect, and after receiving a push wakeup. Loop until `hasMore` is false:
+
+```typescript
+let after: string | undefined;
+do {
+  const url = `/messages/pending?deviceId=${deviceId}${after ? `&after=${after}` : ''}&limit=50`;
+  const resp = await fetch(url);
+  const data = await resp.json();
+  processEnvelopes(data.envelopes);
+  after = data.hasMore ? data.envelopes[data.envelopes.length - 1].envelopeSequence : undefined;
+} while (after);
+```
+
+Use `threadSequence` for per-thread message ordering in the UI. `envelopeSequence` is only for sync pagination.
 
 ### Acknowledge Message
 

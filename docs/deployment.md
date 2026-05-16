@@ -1,0 +1,518 @@
+# Deployment Guide
+
+## Production Requirements
+
+### Infrastructure
+
+| Component | Minimum | Recommended |
+|-----------|---------|-------------|
+| CPU | 2 cores | 4 cores |
+| Memory | 1 GB | 2 GB |
+| Disk | 10 GB | 20 GB |
+| PostgreSQL | 14+ | 15+ |
+| Redis | 6+ | 7+ |
+
+### External Services
+
+- **PostgreSQL**: Managed database (e.g., AWS RDS, Supabase, Neon)
+- **Redis**: Managed cache (e.g., AWS ElastiCache, Upstash)
+- **Cloudflare R2**: S3-compatible object storage for backups
+- **FCM**: Firebase Cloud Messaging for push notifications (optional)
+
+## Environment Configuration
+
+### Production `.env`
+
+```env
+# Application
+NODE_ENV=production
+PORT=3000
+APP_ORIGIN=https://api.birgap.com
+
+# Database
+DATABASE_URL=postgresql://user:password@host:5432/birgap?schema=public&sslmode=require
+
+# Redis
+REDIS_URL=rediss://:password@host:6379
+
+# JWT
+JWT_ACCESS_SECRET=<generate-secure-random-string-min-24-chars>
+JWT_ACCESS_TTL=15m
+REFRESH_TOKEN_TTL_DAYS=30
+
+# WebSocket
+WEBSOCKET_TICKET_TTL_SECONDS=60
+
+# OTP (replace with real SMS provider in production)
+OTP_MODE=mock
+OTP_MOCK_CODE=000000
+OTP_TTL_SECONDS=300
+
+# Devices
+MAX_ACTIVE_DEVICES=3
+SIGNED_PREKEY_ROTATION_DAYS=7
+
+# Push Notifications
+PUSH_PROVIDER=fcm
+FCM_SERVICE_ACCOUNT_JSON={"type":"service_account",...}
+
+# Cloudflare R2
+R2_ENDPOINT=https://<account-id>.r2.cloudflarestorage.com
+R2_ACCESS_KEY_ID=<access-key>
+R2_SECRET_ACCESS_KEY=<secret-key>
+R2_BUCKET_NAME=birgap-backups
+R2_PRESIGNED_PUT_TTL_SECONDS=900
+R2_PRESIGNED_GET_TTL_SECONDS=300
+```
+
+### Security Checklist
+
+- [ ] Generate strong `JWT_ACCESS_SECRET` (min 24 chars, random)
+- [ ] Use SSL for database connection (`sslmode=require`)
+- [ ] Use SSL for Redis connection (`rediss://`)
+- [ ] Set `NODE_ENV=production`
+- [ ] Configure proper CORS origins (not `*`)
+- [ ] Replace mock OTP with real SMS provider
+- [ ] Set up FCM service account for push notifications
+- [ ] Configure R2 bucket with proper permissions
+- [ ] Set up HTTPS/TLS termination
+- [ ] Enable firewall rules (only expose necessary ports)
+
+## Docker Deployment
+
+### Dockerfile
+
+```dockerfile
+FROM node:20-alpine AS builder
+
+WORKDIR /app
+RUN corepack enable && corepack prepare pnpm@10.33.0 --activate
+
+COPY package.json pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile
+
+COPY . .
+RUN pnpm build
+RUN pnpm prisma:generate
+
+FROM node:20-alpine AS runner
+
+WORKDIR /app
+
+RUN addgroup --system --gid 1001 nodejs
+RUN adduser --system --uid 1001 nestjs
+
+COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/prisma ./prisma
+COPY --from=builder /app/package.json ./
+
+RUN chown -R nestjs:nodejs /app
+USER nestjs
+
+EXPOSE 3000
+
+CMD ["node", "dist/main.js"]
+```
+
+### Docker Compose (Production)
+
+```yaml
+version: '3.8'
+
+services:
+  app:
+    build: .
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env
+    depends_on:
+      - postgres
+      - redis
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: birgap
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --requirepass ${REDIS_PASSWORD}
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:
+```
+
+## Deployment Steps
+
+### 1. Build Application
+
+```bash
+# Install dependencies
+pnpm install --frozen-lockfile
+
+# Generate Prisma client
+pnpm prisma:generate
+
+# Build
+pnpm build
+```
+
+### 2. Run Database Migrations
+
+```bash
+# Deploy migrations (non-interactive, safe for production)
+pnpm prisma:deploy
+```
+
+**Important**: Use `prisma:deploy` in production, NOT `prisma:migrate` (which is interactive).
+
+### 3. Start Application
+
+```bash
+# Using PM2 (recommended for Node.js)
+pm2 start dist/main.js --name birgap -i max
+
+# Or with Docker
+docker compose up -d
+```
+
+### 4. Verify Deployment
+
+```bash
+# Health check
+curl https://api.birgap.com/health
+
+# Expected response:
+# {"status":"ok","info":{"postgres":{"status":"up"},"redis":{"status":"up"}}}
+```
+
+## Reverse Proxy Configuration
+
+### Nginx
+
+```nginx
+server {
+    listen 80;
+    server_name api.birgap.com;
+    return 301 https://$server_name$request_uri;
+}
+
+server {
+    listen 443 ssl http2;
+    server_name api.birgap.com;
+
+    ssl_certificate /etc/letsencrypt/live/api.birgap.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/api.birgap.com/privkey.pem;
+
+    # WebSocket support
+    location /socket.io/ {
+        proxy_pass http://localhost:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # REST API
+    location / {
+        proxy_pass http://localhost:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
+
+### Caddy
+
+```caddy
+api.birgap.com {
+    reverse_proxy localhost:3000
+}
+```
+
+Caddy automatically handles WebSocket upgrades and TLS.
+
+## Database Management
+
+### Backup Strategy
+
+```bash
+# PostgreSQL backup
+pg_dump -U postgres birgap > backup_$(date +%Y%m%d_%H%M%S).sql
+
+# Restore
+psql -U postgres birgap < backup_20260516_100000.sql
+```
+
+### Migration Strategy
+
+```bash
+# Always test migrations in staging first
+# Deploy migrations before deploying application code
+pnpm prisma:deploy
+
+# Verify migration
+npx prisma migrate status
+```
+
+### Connection Pooling
+
+For high-traffic deployments, use connection pooling:
+
+- **PgBouncer**: Lightweight connection pooler
+- **Supavisor**: Modern connection pooler
+- **AWS RDS Proxy**: Managed pooling
+
+Configure pool size in `DATABASE_URL`:
+```
+DATABASE_URL=postgresql://user:pass@pooler:6543/birgap?pgbouncer=true
+```
+
+## Monitoring
+
+### Health Check Endpoint
+
+```bash
+GET /health
+```
+
+Configure monitoring tools to poll this endpoint every 30-60 seconds.
+
+### Prometheus Metrics (Future)
+
+Consider adding:
+- Request latency
+- Error rates
+- Active WebSocket connections
+- Database connection pool usage
+- Message throughput
+
+### Logging
+
+Production logs should include:
+- Request ID for tracing
+- User ID (for authenticated requests)
+- Device ID (for device-specific operations)
+- Error stack traces (server-side only)
+
+**Do NOT log**:
+- Access tokens
+- Refresh tokens
+- Phone numbers
+- Message content
+- Ciphertext payloads
+
+### Log Aggregation
+
+Recommended tools:
+- **Datadog**: Full observability platform
+- **Grafana Loki**: Log aggregation with Grafana
+- **AWS CloudWatch**: AWS-native logging
+- **Papertrail**: Simple log management
+
+## Scaling
+
+### Horizontal Scaling
+
+BirGap can scale horizontally with:
+
+1. **Load Balancer**: Distribute traffic across instances
+2. **Shared Database**: Single PostgreSQL instance
+3. **Shared Redis**: Single Redis cluster for socket routing
+4. **Sticky Sessions**: NOT required (stateless API)
+
+**WebSocket Consideration**: With multiple instances, Redis is used for device-to-socket mapping. Ensure all instances connect to the same Redis cluster.
+
+### Vertical Scaling
+
+Increase resources for:
+- High message throughput
+- Large number of concurrent WebSocket connections
+- Heavy backup upload/download traffic
+
+### Database Scaling
+
+- **Read Replicas**: For read-heavy workloads (key bundle fetches)
+- **Connection Pooling**: For high connection counts
+- **Partitioning**: For large message tables (future)
+
+## CI/CD Pipeline
+
+### GitHub Actions Example
+
+```yaml
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 10.33.0
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run tests
+        run: pnpm test
+
+      - name: Build
+        run: pnpm build
+
+      - name: Deploy
+        run: |
+          # SSH to server and deploy
+          ssh ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} << 'EOF'
+            cd /opt/birgap
+            git pull
+            pnpm install --frozen-lockfile
+            pnpm prisma:deploy
+            pnpm build
+            pm2 restart birgap
+          EOF
+```
+
+## Rollback Strategy
+
+### Application Rollback
+
+```bash
+# List PM2 processes
+pm2 list
+
+# Rollback to previous version
+cd /opt/birgap
+git checkout <previous-commit>
+pnpm install --frozen-lockfile
+pnpm build
+pm2 restart birgap
+```
+
+### Database Rollback
+
+```bash
+# Check migration status
+npx prisma migrate status
+
+# Rollback last migration (use with caution!)
+npx prisma migrate resolve --rolled-back <migration-name>
+```
+
+**Warning**: Database rollbacks can cause data loss. Always backup before migrating.
+
+## Disaster Recovery
+
+### Backup Schedule
+
+- **Database**: Daily automated backups
+- **R2 Backups**: Already replicated by Cloudflare
+- **Configuration**: Version control `.env` template (not secrets)
+
+### Recovery Steps
+
+1. Provision new server
+2. Restore database from backup
+3. Deploy application
+4. Run migrations
+5. Verify health checks
+6. Update DNS if needed
+
+## Performance Tuning
+
+### Node.js
+
+```bash
+# Increase max old space size for large workloads
+NODE_OPTIONS="--max-old-space-size=4096" node dist/main.js
+```
+
+### PostgreSQL
+
+```sql
+-- Increase connection limit
+ALTER SYSTEM SET max_connections = 200;
+
+-- Tune shared buffers (25% of RAM)
+ALTER SYSTEM SET shared_buffers = '512MB';
+
+-- Effective cache size (75% of RAM)
+ALTER SYSTEM SET effective_cache_size = '1536MB';
+```
+
+### Redis
+
+```conf
+# Increase max memory
+maxmemory 2gb
+
+# Eviction policy
+maxmemory-policy allkeys-lru
+```
+
+## Security Hardening
+
+### Firewall Rules
+
+```bash
+# Allow only necessary ports
+ufw allow 22/tcp    # SSH
+ufw allow 80/tcp    # HTTP (redirect to HTTPS)
+ufw allow 443/tcp   # HTTPS
+ufw enable
+```
+
+### SSL/TLS
+
+- Use Let's Encrypt for free certificates
+- Enable HTTP/2
+- Disable old TLS versions (< 1.2)
+- Enable HSTS headers
+
+### Rate Limiting
+
+Already configured in application:
+- Auth endpoints: 5 req/min
+- Default endpoints: 60 req/min
+
+Consider adding infrastructure-level rate limiting (e.g., Cloudflare, AWS WAF).

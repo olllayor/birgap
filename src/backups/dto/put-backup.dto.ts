@@ -7,14 +7,19 @@ export class PutBackupDto {
   @Min(1)
   version: number;
 
-  @ApiProperty({ description: 'Opaque encrypted backup blob, usually base64 or base64url.' })
+  @ApiProperty({ description: 'R2 bucket key returned from the upload-url endpoint.' })
   @IsString()
   @MinLength(1)
-  blob: string;
+  bucketKey: string;
 
   @ApiProperty()
   @IsString()
   @MinLength(16)
   @MaxLength(256)
-  checksum: string;
+  sha256: string;
+
+  @ApiProperty()
+  @IsInt()
+  @Min(1)
+  sizeBytes: number;
 }

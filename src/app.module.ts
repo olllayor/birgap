@@ -14,6 +14,7 @@ import { PrismaModule } from './prisma/prisma.module';
 import { PushModule } from './push/push.module';
 import { RealtimeModule } from './realtime/realtime.module';
 import { RedisModule } from './redis/redis.module';
+import { StorageModule } from './storage/storage.module';
 import { UsersModule } from './users/users.module';
 
 @Module({
@@ -45,6 +46,7 @@ import { UsersModule } from './users/users.module';
     RealtimeModule,
     PushModule,
     BackupsModule,
+    StorageModule,
     HealthModule,
   ],
   providers: [
