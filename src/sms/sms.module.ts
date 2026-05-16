@@ -1,5 +1,5 @@
 import { Module } from '@nestjs/common';
-import { ConfigModule } from '@nestjs/config';
+import { ConfigModule, ConfigService } from '@nestjs/config';
 import { PrismaModule } from '../prisma/prisma.module';
 import { SayqalSmsService } from './sayqal-sms.service';
 import { MockSmsService } from './mock-sms.service';
@@ -15,13 +15,13 @@ export const SMS_SERVICE_TOKEN = 'SMS_SERVICE';
     MockSmsService,
     {
       provide: SMS_SERVICE_TOKEN,
-      inject: [SayqalSmsService, MockSmsService, ConfigModule],
+      inject: [SayqalSmsService, MockSmsService, ConfigService],
       useFactory: (
         sayqal: SayqalSmsService,
         mock: MockSmsService,
-        config: ConfigModule,
+        config: ConfigService,
       ) => {
-        const mode = process.env.OTP_MODE ?? 'mock';
+        const mode = config.get<string>('OTP_MODE') ?? 'mock';
         return mode === 'sayqal' ? sayqal : mock;
       },
     },
