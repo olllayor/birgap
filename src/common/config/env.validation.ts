@@ -15,8 +15,8 @@ export const envValidationSchema = Joi.object({
   OTP_TTL_SECONDS: Joi.number().default(300),
   MAX_ACTIVE_DEVICES: Joi.number().default(3),
   SIGNED_PREKEY_ROTATION_DAYS: Joi.number().default(7),
-  PUSH_PROVIDER: Joi.string().valid('logger').default('logger'),
-  FCM_PROJECT_ID: Joi.string().allow('').optional(),
+  PUSH_PROVIDER: Joi.string().valid('logger', 'fcm').default('logger'),
+  FCM_SERVICE_ACCOUNT_JSON: Joi.string().allow('').optional(),
   APNS_TEAM_ID: Joi.string().allow('').optional(),
   HMS_APP_ID: Joi.string().allow('').optional(),
 });
