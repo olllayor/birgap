@@ -37,6 +37,12 @@ WEBSOCKET_TICKET_TTL_SECONDS=60
 OTP_MODE=mock
 OTP_MOCK_CODE=000000
 OTP_TTL_SECONDS=300
+OTP_RESEND_COOLDOWN_SECONDS=120
+OTP_MAX_ATTEMPTS=5
+OTP_LOCKOUT_SECONDS=900
+SMS_SAYQAL_URL=https://sayqal.uz/api
+SMS_SAYQAL_SECRET=your_secret_key
+SMS_SAYQAL_USERNAME=your_username
 MAX_ACTIVE_DEVICES=3
 SIGNED_PREKEY_ROTATION_DAYS=7
 PUSH_PROVIDER=logger
@@ -159,7 +165,12 @@ BirGap/
 │   │   ├── auth.controller.ts   # REST endpoints
 │   │   ├── auth.service.ts      # Business logic
 │   │   ├── auth.module.ts       # Module definition
+│   │   ├── otp.service.ts       # OTP lifecycle management
 │   │   └── dto/                 # Request validation DTOs
+│   ├── sms/                     # SMS provider module
+│   │   ├── sms.module.ts        # Provider factory
+│   │   ├── sayqal-sms.service.ts # Sayqal API client
+│   │   └── mock-sms.service.ts  # Mock provider for dev
 │   ├── messages/                # Message relay module
 │   ├── devices/                 # Device management module
 │   ├── prekeys/                 # Cryptographic key management
@@ -306,19 +317,28 @@ docker compose logs -f redis
 ### Test Authentication Flow
 
 ```bash
-# 1. Request OTP
+# 1. Request OTP (mock mode logs code to console, sayqal mode sends SMS)
 curl -X POST http://localhost:3000/auth/otp/request \
   -H "Content-Type: application/json" \
-  -d '{"phone": "+1234567890"}'
+  -d '{"phone": "+998901234567"}'
 
-# 2. Verify OTP (use OTP_MOCK_CODE from .env)
+# 2. Verify OTP (use code from SMS or OTP_MOCK_CODE in mock mode)
 curl -X POST http://localhost:3000/auth/otp/verify \
   -H "Content-Type: application/json" \
-  -d '{"phone": "+1234567890", "code": "000000"}'
+  -d '{"phone": "+998901234567", "code": "482193"}'
 
 # 3. Use returned accessToken for protected endpoints
 curl http://localhost:3000/devices \
   -H "Authorization: Bearer <accessToken>"
+```
+
+**Switching to Sayqal SMS**:
+```env
+# In .env, change:
+OTP_MODE=sayqal
+SMS_SAYQAL_URL=https://sayqal.uz/api
+SMS_SAYQAL_SECRET=your_secret
+SMS_SAYQAL_USERNAME=your_username
 ```
 
 ### Test WebSocket Connection

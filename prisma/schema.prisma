@@ -12,6 +12,21 @@ enum UserStatus {
   SUSPENDED
 }
 
+enum OtpStatus {
+  UNUSED
+  USED
+  EXPIRED
+}
+
+enum SmsProvider {
+  SAYQAL
+  MOCK
+}
+
+enum SmsType {
+  OTP
+}
+
 enum DevicePlatform {
   ANDROID
   IOS
@@ -188,4 +203,28 @@ model BackupBlob {
   uploadedAt DateTime @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Otp {
+  id        String    @id @default(uuid()) @db.Uuid
+  phoneHash String
+  code      String
+  status    OtpStatus @default(UNUSED)
+  attempts  Int       @default(0)
+  expiresAt DateTime
+  createdAt DateTime  @default(now())
+
+  @@index([phoneHash, status, expiresAt])
+}
+
+model SmsReport {
+  id        String       @id @default(uuid()) @db.Uuid
+  phoneHash String
+  type      SmsType
+  provider  SmsProvider
+  success   Boolean
+  error     String?
+  createdAt DateTime     @default(now())
+
+  @@index([phoneHash, createdAt])
 }

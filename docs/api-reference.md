@@ -21,23 +21,39 @@ POST /auth/otp/request
 **Request Body**:
 ```json
 {
-  "phone": "+1234567890"
+  "phone": "+998901234567"
 }
 ```
 
 **Response** (202 Accepted):
 ```json
 {
-  "phone": "+123****90",
-  "mode": "mock",
+  "phone": "+99890****67",
+  "mode": "sayqal",
+  "success": true,
+  "message": "OTP sent successfully",
   "expiresInSeconds": 300
 }
 ```
 
+**Cooldown Response** (202 Accepted):
+```json
+{
+  "phone": "+99890****67",
+  "mode": "sayqal",
+  "success": true,
+  "message": "OTP already sent. Please wait before requesting a new one.",
+  "canResendAt": "2026-05-16T10:02:00.000Z"
+}
+```
+
 **Notes**:
-- In development mode, no actual SMS is sent
+- OTP mode depends on `OTP_MODE` env var (`mock` or `sayqal`)
+- In `mock` mode, OTP is logged to console (no SMS sent)
+- In `sayqal` mode, OTP is sent via Sayqal SMS provider
 - Phone number is normalized and hashed server-side
 - Returns masked phone for user confirmation
+- 2-minute cooldown between OTP requests per phone number
 
 ---
 
@@ -54,8 +70,8 @@ POST /auth/otp/verify
 **Request Body**:
 ```json
 {
-  "phone": "+1234567890",
-  "code": "000000"
+  "phone": "+998901234567",
+  "code": "482193"
 }
 ```
 
@@ -70,9 +86,38 @@ POST /auth/otp/verify
 }
 ```
 
+**Error Response** (403 Forbidden):
+```json
+{
+  "statusCode": 403,
+  "error": "Forbidden",
+  "message": "Invalid OTP code"
+}
+```
+
+**Lockout Response** (403 Forbidden):
+```json
+{
+  "statusCode": 403,
+  "error": "Forbidden",
+  "message": "Too many failed attempts. Please try again later."
+}
+```
+
+**Expired Response** (404 Not Found):
+```json
+{
+  "statusCode": 404,
+  "error": "Not Found",
+  "message": "Invalid or expired OTP"
+}
+```
+
 **Notes**:
 - Creates user if phone number doesn't exist
-- Default mock code is `000000` (configurable via `OTP_MOCK_CODE`)
+- OTP codes are 6 digits, expire after 5 minutes (configurable)
+- Maximum 5 failed attempts before 15-minute lockout
+- Timing-safe comparison prevents timing attacks
 - Refresh token is opaque (not JWT)
 
 ---

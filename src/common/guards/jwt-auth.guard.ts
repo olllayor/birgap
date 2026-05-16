@@ -1,6 +1,7 @@
 import {
   CanActivate,
   ExecutionContext,
+  ForbiddenException,
   Injectable,
   UnauthorizedException,
 } from '@nestjs/common';
@@ -39,7 +40,7 @@ export class JwtAuthGuard implements CanActivate {
 
     const session = await this.prisma.refreshToken.findUnique({
       where: { id: payload.sid },
-      select: { id: true, userId: true, revokedAt: true, expiresAt: true },
+      select: { id: true, userId: true, revokedAt: true, expiresAt: true, user: { select: { status: true } } },
     });
 
     if (
@@ -49,6 +50,10 @@ export class JwtAuthGuard implements CanActivate {
       session.expiresAt <= new Date()
     ) {
       throw new UnauthorizedException('Session is no longer active');
+    }
+
+    if (session.user.status === 'SUSPENDED') {
+      throw new ForbiddenException('Account is suspended');
     }
 
     request.user = {

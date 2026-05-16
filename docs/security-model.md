@@ -86,6 +86,42 @@ When Alice wants to send a message to Bob:
 
 ## Authentication Security
 
+### OTP Authentication Flow
+
+```
+Client                          Server                          Sayqal SMS
+  │                               │                               │
+  ├─ POST /auth/otp/request ─────►│                               │
+  │  { phone: "+99890..." }       │                               │
+  │                               │                               │
+  │                               │ 1. Generate 6-digit OTP       │
+  │                               │ 2. Store in DB (hashed phone) │
+  │                               │ 3. Send via SMS provider ──────────────►│
+  │                               │                               │
+  │◄─ { phone, mode, expires } ───┤                               │
+  │                               │                     ◄─────────┤ SMS delivered
+  │                               │                               │
+  │  User enters code             │                               │
+  │                               │                               │
+  ├─ POST /auth/otp/verify ──────►│                               │
+  │  { phone, code }              │                               │
+  │                               │ 1. Validate OTP (timing-safe) │
+  │                               │ 2. Mark as USED               │
+  │                               │ 3. Upsert user                │
+  │                               │ 4. Issue token pair           │
+  │                               │                               │
+  │◄─ { user, accessToken, refreshToken }                          │
+```
+
+**OTP Security Properties**:
+- 6-digit codes, 5-minute TTL (configurable)
+- Stored with SHA-256 hashed phone number
+- 2-minute cooldown between requests per phone
+- Maximum 5 failed verification attempts
+- 15-minute lockout after max attempts
+- Timing-safe comparison prevents timing attacks
+- Every SMS attempt logged to `SmsReport` table
+
 ### Token Architecture
 
 ```
@@ -195,6 +231,8 @@ if (!device) {
 |-------|-------|--------|---------|
 | Default | 60 requests | 60 seconds | General API protection |
 | Auth | 5 requests | 60 seconds | OTP brute-force prevention |
+| OTP cooldown | 1 request | 120 seconds | Per-phone resend cooldown |
+| OTP attempts | 5 failed | 900 seconds | Per-phone lockout threshold |
 
 ## Input Validation
 
@@ -359,6 +397,8 @@ Server Workflow:
 ### What is Logged
 
 - Authentication attempts (success/failure)
+- OTP generation and verification events
+- SMS delivery attempts and results (provider, success, errors)
 - Device registration/deactivation
 - Message send/receive events (metadata only)
 - Push notification delivery attempts
@@ -381,3 +421,6 @@ Server Workflow:
 - [ ] Quantum-resistant key exchange (post-quantum cryptography)
 - [ ] Hardware security key support (WebAuthn)
 - [ ] Encrypted push notification payloads (when supported)
+- [ ] SMS provider fallback (secondary provider on failure)
+- [ ] JWT key rotation with multiple signing keys
+- [ ] Device fingerprinting for anomaly detection

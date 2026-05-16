@@ -8,7 +8,16 @@ OpenAPI docs: `http://localhost:3000/docs`
 
 ## Auth Flow
 
-Development login uses mock OTP.
+Authentication uses OTP verification via SMS (Sayqal provider) or mock mode for development.
+
+### OTP Behavior
+
+| Mode | Description |
+|------|-------------|
+| `mock` | OTP code logged to server console, no SMS sent |
+| `sayqal` | OTP sent via Sayqal SMS gateway |
+
+Switch modes via `OTP_MODE` env variable.
 
 ### Request OTP
 
@@ -25,21 +34,38 @@ Returns `202 Accepted`.
 ```json
 {
   "phone": "+99890****33",
-  "mode": "mock",
+  "mode": "sayqal",
+  "success": true,
+  "message": "OTP sent successfully",
   "expiresInSeconds": 300
 }
 ```
+
+**Cooldown response** (if requested too soon):
+
+```json
+{
+  "phone": "+99890****33",
+  "mode": "sayqal",
+  "success": true,
+  "message": "OTP already sent. Please wait before requesting a new one.",
+  "canResendAt": "2026-05-16T10:02:00.000Z"
+}
+```
+
+Rules:
+- 2-minute cooldown between OTP requests per phone number
+- OTP codes are 6 digits
+- Codes expire after 5 minutes (configurable via `OTP_TTL_SECONDS`)
 
 ### Verify OTP
 
 `POST /auth/otp/verify`
 
-Use the configured mock code from `.env`, default `000000`.
-
 ```json
 {
   "phone": "+998901112233",
-  "code": "000000"
+  "code": "482193"
 }
 ```
 
@@ -54,6 +80,19 @@ Returns:
   "refreshToken": "opaque-refresh-token"
 }
 ```
+
+**Error responses**:
+
+| Code | Message | Meaning |
+|------|---------|---------|
+| 403 | `Invalid OTP code` | Wrong code, attempt counted |
+| 403 | `Too many failed attempts. Please try again later.` | Locked out (5 failed attempts) |
+| 404 | `Invalid or expired OTP` | No valid OTP found or expired |
+
+Rules:
+- Maximum 5 failed attempts per OTP
+- 15-minute lockout after max attempts
+- Timing-safe comparison used (no timing attacks)
 
 Use the access token for protected REST endpoints:
 
@@ -628,6 +667,39 @@ No auth required.
 
 Mobile can use this for simple API reachability checks during development.
 
+## SMS Provider
+
+The backend supports two OTP delivery modes:
+
+### Sayqal SMS Provider
+
+Production SMS delivery via Sayqal gateway (`https://sayqal.uz/api`).
+
+**Authentication**: MD5-based token generated per request:
+```
+X-Access-Token = MD5("{endpoint} {username} {secret} {utime}")
+```
+
+**Endpoints used**:
+- `TransmitSMS` — sends OTP or regular messages
+- `DetalSMS` — checks delivery status (internal use)
+
+**Service types**:
+- `2` — OTP verification codes
+- `4` — Regular messages
+
+### Mock SMS Provider
+
+Development mode. OTP codes are logged to server console instead of sending SMS.
+
+### Switching Providers
+
+Set `OTP_MODE` environment variable:
+- `mock` — use mock provider (default)
+- `sayqal` — use Sayqal SMS provider
+
+Every SMS attempt is logged to the `SmsReport` table with provider, success status, and any errors.
+
 ## Recommended Mobile Startup Sequence
 
 1. Request and verify OTP.
@@ -654,7 +726,8 @@ Mobile can use this for simple API reachability checks during development.
 ## Error Handling Expectations
 
 - `401`: access token missing/expired/invalid. Refresh token and retry once.
-- `403`: device does not belong to current user or session is revoked. Stop using that device/session.
+- `403`: device does not belong to current user, session is revoked, or account suspended. Stop using that device/session.
+- `403`: OTP verification failed too many times. Wait for lockout to expire.
 - `404`: target resource does not exist or is not available to this user.
 - `409`: max active devices reached. Show device removal UI.
 - `400`: malformed request, missing envelopes, invalid ACK status, or invalid recipient.

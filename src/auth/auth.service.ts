@@ -6,6 +6,7 @@ import { AuthenticatedUser } from '../common/types/authenticated-user';
 import { maskPhone, normalizePhone, randomToken, sha256 } from '../common/utils/crypto.util';
 import { RequestOtpDto } from './dto/request-otp.dto';
 import { VerifyOtpDto } from './dto/verify-otp.dto';
+import { OtpService } from './otp.service';
 
 @Injectable()
 export class AuthService {
@@ -13,22 +14,21 @@ export class AuthService {
     private readonly prisma: PrismaService,
     private readonly jwtService: JwtService,
     private readonly config: ConfigService,
+    private readonly otpService: OtpService,
   ) {}
 
   async requestOtp(dto: RequestOtpDto) {
     const phone = normalizePhone(dto.phone);
+    const result = await this.otpService.requestOtp(phone);
     return {
       phone: maskPhone(phone),
       mode: this.config.get<string>('OTP_MODE'),
-      expiresInSeconds: this.config.get<number>('OTP_TTL_SECONDS') ?? 300,
+      ...result,
     };
   }
 
   async verifyOtp(dto: VerifyOtpDto) {
-    const expectedCode = this.config.get<string>('OTP_MOCK_CODE') ?? '000000';
-    if (dto.code !== expectedCode) {
-      throw new ForbiddenException('Invalid OTP code');
-    }
+    await this.otpService.verifyOtp(dto.phone, dto.code);
 
     const phone = normalizePhone(dto.phone);
     const user = await this.prisma.user.upsert({
