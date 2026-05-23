@@ -1,6 +1,12 @@
-import { IsUUID } from 'class-validator';
+import { IsOptional, IsUUID } from 'class-validator';
 
 export class TypingDto {
+  @IsOptional()
   @IsUUID()
-  recipientUserId: string;
+  recipientUserId?: string;
+
+  @IsOptional()
+  @IsUUID()
+  groupId?: string;
 }
+

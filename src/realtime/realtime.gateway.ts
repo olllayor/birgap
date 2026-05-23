@@ -1,4 +1,4 @@
-import { Logger } from '@nestjs/common';
+import { Logger, OnModuleDestroy } from '@nestjs/common';
 import { OnEvent } from '@nestjs/event-emitter';
 import {
   ConnectedSocket,
@@ -14,6 +14,7 @@ import { PushService } from '../push/push.service';
 import { RedisService } from '../redis/redis.service';
 import { TypingDto } from './dto/typing.dto';
 import { RealtimeService } from './realtime.service';
+import { PrismaService } from '../prisma/prisma.service';
 
 type AuthenticatedSocket = Socket & {
   data: {
@@ -28,8 +29,9 @@ type AuthenticatedSocket = Socket & {
   pingInterval: 25000,
   pingTimeout: 10000,
 })
-export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect {
+export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect, OnModuleDestroy {
   private readonly logger = new Logger(RealtimeGateway.name);
+  private isShuttingDown = false;
 
   @WebSocketServer()
   server: Server;
@@ -38,9 +40,16 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
     private readonly realtimeService: RealtimeService,
     private readonly redis: RedisService,
     private readonly push: PushService,
+    private readonly prisma: PrismaService,
   ) {}
 
   async handleConnection(client: AuthenticatedSocket) {
+    if (this.isShuttingDown) {
+      client.emit('server.shutdown', { message: 'Server is shutting down' });
+      client.disconnect(true);
+      return;
+    }
+
     const ticket = this.extractTicket(client);
     if (!ticket) {
       client.disconnect(true);
@@ -76,25 +85,57 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
   }
 
   @SubscribeMessage('typing.start')
-  handleTypingStart(@ConnectedSocket() client: AuthenticatedSocket, @MessageBody() body: TypingDto) {
+  async handleTypingStart(@ConnectedSocket() client: AuthenticatedSocket, @MessageBody() body: TypingDto) {
     if (!client.data.userId) {
       return;
     }
-    this.server.to(`user:${body.recipientUserId}`).emit('typing.start', {
-      userId: client.data.userId,
-      deviceId: client.data.deviceId,
-    });
+    if (body.groupId) {
+      const members = await this.prisma.groupMember.findMany({
+        where: { groupId: body.groupId },
+        select: { userId: true },
+      });
+      for (const member of members) {
+        if (member.userId !== client.data.userId) {
+          this.server.to(`user:${member.userId}`).emit('typing.start', {
+            userId: client.data.userId,
+            deviceId: client.data.deviceId,
+            groupId: body.groupId,
+          });
+        }
+      }
+    } else if (body.recipientUserId) {
+      this.server.to(`user:${body.recipientUserId}`).emit('typing.start', {
+        userId: client.data.userId,
+        deviceId: client.data.deviceId,
+      });
+    }
   }
 
   @SubscribeMessage('typing.stop')
-  handleTypingStop(@ConnectedSocket() client: AuthenticatedSocket, @MessageBody() body: TypingDto) {
+  async handleTypingStop(@ConnectedSocket() client: AuthenticatedSocket, @MessageBody() body: TypingDto) {
     if (!client.data.userId) {
       return;
     }
-    this.server.to(`user:${body.recipientUserId}`).emit('typing.stop', {
-      userId: client.data.userId,
-      deviceId: client.data.deviceId,
-    });
+    if (body.groupId) {
+      const members = await this.prisma.groupMember.findMany({
+        where: { groupId: body.groupId },
+        select: { userId: true },
+      });
+      for (const member of members) {
+        if (member.userId !== client.data.userId) {
+          this.server.to(`user:${member.userId}`).emit('typing.stop', {
+            userId: client.data.userId,
+            deviceId: client.data.deviceId,
+            groupId: body.groupId,
+          });
+        }
+      }
+    } else if (body.recipientUserId) {
+      this.server.to(`user:${body.recipientUserId}`).emit('typing.stop', {
+        userId: client.data.userId,
+        deviceId: client.data.deviceId,
+      });
+    }
   }
 
   @OnEvent('message.created')
@@ -108,6 +149,42 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
   @OnEvent('message.ack')
   onMessageAck(payload: { senderUserId: string }) {
     this.server.to(`user:${payload.senderUserId}`).emit('message.ack', payload);
+  }
+
+  async onModuleDestroy() {
+    this.isShuttingDown = true;
+    this.logger.log('Shutting down WebSocket gateway, notifying connected clients...');
+
+    this.server.emit('server.shutdown', { message: 'Server is shutting down, please reconnect' });
+
+    try {
+      const connectedSockets = Array.from(this.server.sockets.sockets.values()) as AuthenticatedSocket[];
+      this.logger.log(`Cleaning up ${connectedSockets.length} active sockets in Redis...`);
+      await Promise.all(
+        connectedSockets.map(async (socket) => {
+          const { userId, deviceId } = socket.data;
+          if (userId && deviceId) {
+            await this.redis.removeDeviceSocket(userId, deviceId, socket.id).catch(() => undefined);
+          }
+        }),
+      );
+    } catch (error) {
+      this.logger.warn(`Failed to cleanup Redis sockets during shutdown: ${error instanceof Error ? error.message : error}`);
+    }
+
+    await new Promise<void>((resolve) => {
+      const timeout = setTimeout(() => {
+        this.logger.warn('Graceful shutdown timeout reached, forcing close');
+        resolve();
+      }, 5000);
+
+      this.server.close(() => {
+        clearTimeout(timeout);
+        resolve();
+      });
+    });
+
+    this.logger.log('WebSocket gateway closed');
   }
 
   private extractTicket(client: Socket) {

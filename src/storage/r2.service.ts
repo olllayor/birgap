@@ -43,6 +43,46 @@ export class R2Service implements OnModuleInit {
     return { uploadUrl, bucketKey };
   }
 
+  async generatePresignedUploadUrl(
+    userId: string,
+    filename: string,
+    mimeType: string,
+    sizeBytes: number,
+    purpose: 'avatar' | 'media',
+  ): Promise<{ uploadUrl: string; bucketKey: string }> {
+    const maxAvatarSize = 5 * 1024 * 1024; // 5MB
+    const maxMediaSize = 100 * 1024 * 1024; // 100MB
+
+    if (purpose === 'avatar' && sizeBytes > maxAvatarSize) {
+      throw new Error(`Avatar size exceeds limit of 5MB: got ${sizeBytes} bytes`);
+    }
+    if (purpose === 'media' && sizeBytes > maxMediaSize) {
+      throw new Error(`Media size exceeds limit of 100MB: got ${sizeBytes} bytes`);
+    }
+
+    const allowedAvatarMimeTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+    if (purpose === 'avatar' && !allowedAvatarMimeTypes.includes(mimeType)) {
+      throw new Error(`Invalid avatar mime type: ${mimeType}. Only jpeg, png, webp, and gif are allowed.`);
+    }
+
+    const uuid = randomUUID();
+    const extension = filename.split('.').pop() ?? 'bin';
+    const cleanExtension = extension.replace(/[^a-zA-Z0-9]/g, '');
+    const folder = purpose === 'avatar' ? 'avatars' : 'media';
+    const bucketKey = `${folder}/${userId}/${uuid}.${cleanExtension}`;
+
+    const command = new PutObjectCommand({
+      Bucket: this.bucket,
+      Key: bucketKey,
+      ContentLength: sizeBytes,
+      ContentType: mimeType,
+    });
+
+    const uploadUrl = await getSignedUrl(this.client, command, { expiresIn: this.putTtl });
+
+    return { uploadUrl, bucketKey };
+  }
+
   async generateDownloadUrl(bucketKey: string): Promise<string> {
     const command = new GetObjectCommand({
       Bucket: this.bucket,

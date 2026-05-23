@@ -84,6 +84,24 @@ export class OtpService {
     const maxAttempts = this.config.get<number>('OTP_MAX_ATTEMPTS') ?? 5;
     const lockoutSeconds = this.config.get<number>('OTP_LOCKOUT_SECONDS') ?? 900;
 
+    const recentFailed = await this.prisma.otp.findFirst({
+      where: {
+        phoneHash,
+        status: OtpStatus.UNUSED,
+        attempts: { gte: maxAttempts },
+        createdAt: {
+          gt: new Date(Date.now() - lockoutSeconds * 1000),
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    if (recentFailed) {
+      throw new ForbiddenException(
+        'Too many failed attempts. Please try again later.',
+      );
+    }
+
     const otp = await this.prisma.otp.findFirst({
       where: {
         phoneHash,
@@ -96,25 +114,13 @@ export class OtpService {
     });
 
     if (!otp) {
-      const recentFailed = await this.prisma.otp.findFirst({
-        where: {
-          phoneHash,
-          status: OtpStatus.UNUSED,
-          attempts: { gte: maxAttempts },
-          createdAt: {
-            gt: new Date(Date.now() - lockoutSeconds * 1000),
-          },
-        },
-        orderBy: { createdAt: 'desc' },
-      });
-
-      if (recentFailed) {
-        throw new ForbiddenException(
-          'Too many failed attempts. Please try again later.',
-        );
-      }
-
       throw new NotFoundException('Invalid or expired OTP');
+    }
+
+    if (otp.attempts >= maxAttempts) {
+      throw new ForbiddenException(
+        'Too many failed attempts. Please try again later.',
+      );
     }
 
     const expectedCode = otp.code.padStart(6, '0');
@@ -123,16 +129,16 @@ export class OtpService {
     if (!this.timingSafeCompare(providedCode, expectedCode)) {
       const newAttempts = otp.attempts + 1;
 
+      await this.prisma.otp.update({
+        where: { id: otp.id },
+        data: { attempts: newAttempts },
+      });
+
       if (newAttempts >= maxAttempts) {
         throw new ForbiddenException(
           'Too many failed attempts. Please try again later.',
         );
       }
-
-      await this.prisma.otp.update({
-        where: { id: otp.id },
-        data: { attempts: newAttempts },
-      });
 
       throw new ForbiddenException('Invalid OTP code');
     }

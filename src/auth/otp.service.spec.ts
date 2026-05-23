@@ -11,8 +11,16 @@ describe('OtpService', () => {
   let prisma: PrismaService;
   let smsService: any;
 
+  let mockActiveOtp: any = null;
+  let mockFailedOtp: any = null;
+
   const mockOtpModel = {
-    findFirst: jest.fn(),
+    findFirst: jest.fn().mockImplementation((args) => {
+      if (args?.where?.attempts) {
+        return mockFailedOtp;
+      }
+      return mockActiveOtp;
+    }),
     create: jest.fn(),
     update: jest.fn(),
   };
@@ -22,6 +30,12 @@ describe('OtpService', () => {
   };
 
   beforeEach(async () => {
+    mockActiveOtp = null;
+    mockFailedOtp = null;
+    mockOtpModel.findFirst.mockClear();
+    mockOtpModel.create.mockClear();
+    mockOtpModel.update.mockClear();
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         OtpService,
@@ -48,7 +62,7 @@ describe('OtpService', () => {
 
   describe('requestOtp', () => {
     it('should send new OTP successfully', async () => {
-      mockOtpModel.findFirst.mockResolvedValue(null);
+      mockActiveOtp = null;
       mockOtpModel.create.mockResolvedValue({ id: '1', code: '123456' });
       mockSmsService.sendOtp.mockResolvedValue({ success: true });
 
@@ -66,7 +80,7 @@ describe('OtpService', () => {
         status: OtpStatus.UNUSED,
         createdAt: new Date(),
       };
-      mockOtpModel.findFirst.mockResolvedValue(recentOtp);
+      mockActiveOtp = recentOtp;
 
       const result = await service.requestOtp('+998901234567');
 
@@ -76,7 +90,7 @@ describe('OtpService', () => {
     });
 
     it('should throw if SMS sending fails', async () => {
-      mockOtpModel.findFirst.mockResolvedValue(null);
+      mockActiveOtp = null;
       mockOtpModel.create.mockResolvedValue({ id: '1' });
       mockSmsService.sendOtp.mockResolvedValue({ success: false, error: 'API error' });
 
@@ -97,7 +111,7 @@ describe('OtpService', () => {
         expiresAt: new Date(Date.now() + 300000),
         createdAt: new Date(),
       };
-      mockOtpModel.findFirst.mockResolvedValue(validOtp);
+      mockActiveOtp = validOtp;
       mockOtpModel.update.mockResolvedValue({});
 
       const result = await service.verifyOtp('+998901234567', '123456');
@@ -119,7 +133,7 @@ describe('OtpService', () => {
         expiresAt: new Date(Date.now() + 300000),
         createdAt: new Date(),
       };
-      mockOtpModel.findFirst.mockResolvedValue(validOtp);
+      mockActiveOtp = validOtp;
       mockOtpModel.update.mockResolvedValue({});
 
       await expect(service.verifyOtp('+998901234567', '000000')).rejects.toThrow(
@@ -128,7 +142,7 @@ describe('OtpService', () => {
     });
 
     it('should reject expired OTP', async () => {
-      mockOtpModel.findFirst.mockResolvedValue(null);
+      mockActiveOtp = null;
 
       await expect(service.verifyOtp('+998901234567', '123456')).rejects.toThrow(
         NotFoundException,
@@ -136,7 +150,7 @@ describe('OtpService', () => {
     });
 
     it('should lock out after max failed attempts', async () => {
-      const otpWithMaxAttempts = {
+      const otpWithAttempts = {
         id: '1',
         phoneHash: 'hash',
         code: '123456',
@@ -145,9 +159,69 @@ describe('OtpService', () => {
         expiresAt: new Date(Date.now() + 300000),
         createdAt: new Date(),
       };
-      mockOtpModel.findFirst.mockResolvedValue(otpWithMaxAttempts);
+      mockActiveOtp = otpWithAttempts;
+      mockOtpModel.update.mockResolvedValue({});
 
       await expect(service.verifyOtp('+998901234567', '000000')).rejects.toThrow(
+        ForbiddenException,
+      );
+    });
+
+    it('should persist the 5th failed attempt before throwing lockout ForbiddenException', async () => {
+      const otpWithAttempts = {
+        id: '1',
+        phoneHash: 'hash',
+        code: '123456',
+        status: OtpStatus.UNUSED,
+        attempts: 4,
+        expiresAt: new Date(Date.now() + 300000),
+        createdAt: new Date(),
+      };
+      mockActiveOtp = otpWithAttempts;
+      mockOtpModel.update.mockResolvedValue({});
+
+      await expect(service.verifyOtp('+998901234567', '000000')).rejects.toThrow(
+        ForbiddenException,
+      );
+
+      // Verify attempts is updated in DB before throwing
+      expect(mockOtpModel.update).toHaveBeenCalledWith({
+        where: { id: '1' },
+        data: { attempts: 5 },
+      });
+    });
+
+    it('should reject verification even with correct code if locked out', async () => {
+      const failedOtp = {
+        id: '2',
+        phoneHash: 'hash',
+        code: '123456',
+        status: OtpStatus.UNUSED,
+        attempts: 5,
+        expiresAt: new Date(Date.now() + 300000),
+        createdAt: new Date(),
+      };
+      mockFailedOtp = failedOtp;
+
+      await expect(service.verifyOtp('+998901234567', '123456')).rejects.toThrow(
+        ForbiddenException,
+      );
+      expect(mockOtpModel.update).not.toHaveBeenCalled();
+    });
+
+    it('should lock out immediately if an active OTP already has too many failed attempts', async () => {
+      const otpWithMaxAttempts = {
+        id: '1',
+        phoneHash: 'hash',
+        code: '123456',
+        status: OtpStatus.UNUSED,
+        attempts: 5,
+        expiresAt: new Date(Date.now() + 300000),
+        createdAt: new Date(),
+      };
+      mockActiveOtp = otpWithMaxAttempts;
+
+      await expect(service.verifyOtp('+998901234567', '123456')).rejects.toThrow(
         ForbiddenException,
       );
     });

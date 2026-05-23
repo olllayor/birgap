@@ -1,5 +1,6 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { UpdateProfileDto } from './dto/profile.dto';
 
 @Injectable()
 export class UsersService {
@@ -84,4 +85,78 @@ export class UsersService {
       return { userId, devices: bundles };
     });
   }
+
+  async syncContacts(phoneHashes: string[]) {
+    return this.prisma.user.findMany({
+      where: {
+        phoneHash: { in: phoneHashes },
+        status: 'ACTIVE',
+      },
+      select: {
+        id: true,
+        phoneHash: true,
+        username: true,
+        profileAvatarUrl: true,
+        encryptedProfile: true,
+        profileKeyHash: true,
+      },
+    });
+  }
+
+  async updateProfile(userId: string, dto: UpdateProfileDto) {
+    if (dto.username) {
+      const existingUser = await this.prisma.user.findFirst({
+        where: {
+          username: { equals: dto.username, mode: 'insensitive' },
+          id: { not: userId },
+        },
+      });
+      if (existingUser) {
+        throw new BadRequestException('Username is already taken');
+      }
+    }
+
+    return this.prisma.user.update({
+      where: { id: userId },
+      data: {
+        ...(dto.username !== undefined && { username: dto.username }),
+        ...(dto.profileAvatarUrl !== undefined && { profileAvatarUrl: dto.profileAvatarUrl }),
+        ...(dto.encryptedProfile !== undefined && { encryptedProfile: dto.encryptedProfile }),
+        ...(dto.profileKeyHash !== undefined && { profileKeyHash: dto.profileKeyHash }),
+      },
+      select: {
+        id: true,
+        phoneHash: true,
+        username: true,
+        profileAvatarUrl: true,
+        encryptedProfile: true,
+        profileKeyHash: true,
+        updatedAt: true,
+      },
+    });
+  }
+
+  async searchByUsername(usernameQuery: string) {
+    if (!usernameQuery || usernameQuery.trim().length < 3) {
+      throw new BadRequestException('Search query must be at least 3 characters');
+    }
+    return this.prisma.user.findMany({
+      where: {
+        username: {
+          startsWith: usernameQuery,
+          mode: 'insensitive',
+        },
+        status: 'ACTIVE',
+      },
+      take: 10,
+      select: {
+        id: true,
+        username: true,
+        profileAvatarUrl: true,
+        encryptedProfile: true,
+        profileKeyHash: true,
+      },
+    });
+  }
 }
+

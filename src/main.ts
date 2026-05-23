@@ -1,4 +1,4 @@
-import { ValidationPipe } from '@nestjs/common';
+import { Logger, ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
 import { NestExpressApplication } from '@nestjs/platform-express';
@@ -8,6 +8,7 @@ import { AppModule } from './app.module';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 
 async function bootstrap() {
+  const logger = new Logger('Bootstrap');
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
   app.enableShutdownHooks();
   const config = app.get(ConfigService);
@@ -37,7 +38,15 @@ async function bootstrap() {
   );
   SwaggerModule.setup('docs', app, document);
 
-  await app.listen(config.get<number>('PORT') ?? 3000);
+  const port = config.get<number>('PORT') ?? 3000;
+  await app.listen(port);
+  logger.log(`Server running on port ${port}`);
+
+  for (const signal of ['SIGTERM', 'SIGINT']) {
+    process.on(signal, () => {
+      logger.log(`${signal} received, starting graceful shutdown...`);
+    });
+  }
 }
 
 bootstrap();

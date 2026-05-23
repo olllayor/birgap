@@ -154,6 +154,7 @@ export class MessagesService {
           select: {
             id: true,
             threadId: true,
+            groupId: true,
             senderUserId: true,
             senderDeviceId: true,
             threadSequence: true,
@@ -195,6 +196,7 @@ export class MessagesService {
             senderUserId: true,
             senderDeviceId: true,
             threadId: true,
+            groupId: true,
             threadSequence: true,
           },
         },
@@ -207,6 +209,7 @@ export class MessagesService {
       userId,
       status: updated.status,
       threadId: updated.message.threadId,
+      groupId: updated.message.groupId,
       threadSequence: updated.message.threadSequence,
       senderUserId: updated.message.senderUserId,
       senderDeviceId: updated.message.senderDeviceId,
@@ -224,10 +227,20 @@ export class MessagesService {
     }
   }
 
-  private serializeMessage(message: { id: string; threadId: string; senderUserId: string; senderDeviceId: string; threadSequence: number; createdAt: Date; envelopes: unknown[] }) {
+  private serializeMessage(message: {
+    id: string;
+    threadId: string | null;
+    groupId?: string | null;
+    senderUserId: string;
+    senderDeviceId: string;
+    threadSequence: number;
+    createdAt: Date;
+    envelopes: unknown[];
+  }) {
     return {
       id: message.id,
       threadId: message.threadId,
+      groupId: message.groupId ?? null,
       senderUserId: message.senderUserId,
       senderDeviceId: message.senderDeviceId,
       threadSequence: message.threadSequence,

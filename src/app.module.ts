@@ -1,8 +1,10 @@
 import { Module } from '@nestjs/common';
-import { ConfigModule } from '@nestjs/config';
+import { ConfigModule, ConfigService } from '@nestjs/config';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import { APP_GUARD } from '@nestjs/core';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
+import { ScheduleModule } from '@nestjs/schedule';
+import { BullModule } from '@nestjs/bullmq';
 import { AuthModule } from './auth/auth.module';
 import { BackupsModule } from './backups/backups.module';
 import { DevicesModule } from './devices/devices.module';
@@ -16,6 +18,8 @@ import { RealtimeModule } from './realtime/realtime.module';
 import { RedisModule } from './redis/redis.module';
 import { StorageModule } from './storage/storage.module';
 import { UsersModule } from './users/users.module';
+import { GroupsModule } from './groups/groups.module';
+import { PruneService } from './common/tasks/prune.service';
 
 @Module({
   imports: [
@@ -36,6 +40,23 @@ import { UsersModule } from './users/users.module';
       },
     ]),
     EventEmitterModule.forRoot(),
+    ScheduleModule.forRoot(),
+    BullModule.forRootAsync({
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => {
+        const url = new URL(config.getOrThrow<string>('REDIS_URL'));
+        return {
+          connection: {
+            host: url.hostname,
+            port: parseInt(url.port, 10) || 6379,
+            username: url.username || undefined,
+            password: url.password || undefined,
+            db: url.pathname ? parseInt(url.pathname.substring(1), 10) || 0 : 0,
+            maxRetriesPerRequest: null,
+          },
+        };
+      },
+    }),
     PrismaModule,
     RedisModule,
     AuthModule,
@@ -47,9 +68,11 @@ import { UsersModule } from './users/users.module';
     PushModule,
     BackupsModule,
     StorageModule,
+    GroupsModule,
     HealthModule,
   ],
   providers: [
+    PruneService,
     {
       provide: APP_GUARD,
       useClass: ThrottlerGuard,
@@ -57,3 +80,4 @@ import { UsersModule } from './users/users.module';
   ],
 })
 export class AppModule {}
+

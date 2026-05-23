@@ -1,4 +1,4 @@
-import { NotFoundException } from '@nestjs/common';
+import { NotFoundException, BadRequestException } from '@nestjs/common';
 import { UsersService } from './users.service';
 
 describe('UsersService', () => {
@@ -53,4 +53,120 @@ describe('UsersService', () => {
 
     await expect(service.getDeviceKeyBundles('user-1')).rejects.toBeInstanceOf(NotFoundException);
   });
+
+  describe('syncContacts', () => {
+    it('queries active users with matching phone hashes', async () => {
+      const matchedUsers = [
+        { id: 'user-1', phoneHash: 'hash-1', username: 'alice' },
+      ];
+      const prisma = {
+        user: { findMany: jest.fn().mockResolvedValue(matchedUsers) },
+      };
+      const service = new UsersService(prisma as any);
+
+      await expect(service.syncContacts(['hash-1', 'hash-2'])).resolves.toEqual(matchedUsers);
+      expect(prisma.user.findMany).toHaveBeenCalledWith({
+        where: {
+          phoneHash: { in: ['hash-1', 'hash-2'] },
+          status: 'ACTIVE',
+        },
+        select: {
+          id: true,
+          phoneHash: true,
+          username: true,
+          profileAvatarUrl: true,
+          encryptedProfile: true,
+          profileKeyHash: true,
+        },
+      });
+    });
+  });
+
+  describe('updateProfile', () => {
+    it('updates user profile if username is not taken', async () => {
+      const mockUpdated = { id: 'user-1', username: 'bob_new' };
+      const prisma = {
+        user: {
+          findFirst: jest.fn().mockResolvedValue(null),
+          update: jest.fn().mockResolvedValue(mockUpdated),
+        },
+      };
+      const service = new UsersService(prisma as any);
+
+      await expect(
+        service.updateProfile('user-1', { username: 'bob_new', profileAvatarUrl: 'http://avatar' })
+      ).resolves.toEqual(mockUpdated);
+
+      expect(prisma.user.findFirst).toHaveBeenCalledWith({
+        where: {
+          username: { equals: 'bob_new', mode: 'insensitive' },
+          id: { not: 'user-1' },
+        },
+      });
+      expect(prisma.user.update).toHaveBeenCalledWith({
+        where: { id: 'user-1' },
+        data: {
+          username: 'bob_new',
+          profileAvatarUrl: 'http://avatar',
+        },
+        select: {
+          id: true,
+          phoneHash: true,
+          username: true,
+          profileAvatarUrl: true,
+          encryptedProfile: true,
+          profileKeyHash: true,
+          updatedAt: true,
+        },
+      });
+    });
+
+    it('throws BadRequestException if username is already taken by someone else', async () => {
+      const prisma = {
+        user: {
+          findFirst: jest.fn().mockResolvedValue({ id: 'user-2', username: 'bob_new' }),
+        },
+      };
+      const service = new UsersService(prisma as any);
+
+      await expect(
+        service.updateProfile('user-1', { username: 'bob_new' })
+      ).rejects.toThrow(BadRequestException);
+    });
+  });
+
+  describe('searchByUsername', () => {
+    it('throws if search query is less than 3 characters', async () => {
+      const service = new UsersService({} as any);
+      await expect(service.searchByUsername('ab')).rejects.toThrow(BadRequestException);
+    });
+
+    it('finds active users by startsWith match', async () => {
+      const mockResult = [{ id: 'user-1', username: 'alice_smith' }];
+      const prisma = {
+        user: { findMany: jest.fn().mockResolvedValue(mockResult) },
+      };
+      const service = new UsersService(prisma as any);
+
+      await expect(service.searchByUsername('ali')).resolves.toEqual(mockResult);
+      expect(prisma.user.findMany).toHaveBeenCalledWith({
+        where: {
+          username: {
+            startsWith: 'ali',
+            mode: 'insensitive',
+          },
+          status: 'ACTIVE',
+        },
+        take: 10,
+        select: {
+          id: true,
+          username: true,
+          profileAvatarUrl: true,
+          encryptedProfile: true,
+          profileKeyHash: true,
+        },
+      });
+    });
+  });
 });
+

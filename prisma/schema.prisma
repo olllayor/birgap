@@ -53,10 +53,16 @@ model User {
   createdAt   DateTime   @default(now())
   updatedAt   DateTime   @updatedAt
 
+  username          String?     @unique
+  profileAvatarUrl  String?
+  encryptedProfile  Json?
+  profileKeyHash    String?
+
   devices       Device[]
   refreshTokens RefreshToken[]
   sentMessages  Message[]      @relation("SentMessages")
   backups       BackupBlob[]
+  groupMembers  GroupMember[]
 }
 
 model Device {
@@ -127,21 +133,25 @@ model DirectThread {
 
 model Message {
   id             String   @id @default(uuid()) @db.Uuid
-  threadId       String   @db.Uuid
+  threadId       String?  @db.Uuid
+  groupId        String?  @db.Uuid
   senderUserId   String   @db.Uuid
   senderDeviceId String   @db.Uuid
   idempotencyKey String
   threadSequence Int
   createdAt      DateTime @default(now())
 
-  thread       DirectThread     @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  thread       DirectThread?    @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  group        Group?           @relation(fields: [groupId], references: [id], onDelete: Cascade)
   sender       User             @relation("SentMessages", fields: [senderUserId], references: [id], onDelete: Cascade)
   senderDevice Device           @relation("SenderDeviceMessages", fields: [senderDeviceId], references: [id], onDelete: Restrict)
   envelopes    MessageEnvelope[]
 
   @@unique([senderDeviceId, idempotencyKey])
   @@unique([threadId, threadSequence])
+  @@unique([groupId, threadSequence])
   @@index([threadId, threadSequence])
+  @@index([groupId, threadSequence])
 }
 
 model MessageEnvelope {
@@ -160,8 +170,7 @@ model MessageEnvelope {
   recipientDevice Device  @relation("RecipientDeviceEnvelopes", fields: [recipientDeviceId], references: [id], onDelete: Restrict)
 
   @@unique([messageId, recipientDeviceId])
-  @@index([recipientDeviceId, status])
-  @@index([recipientDeviceId, envelopeSequence])
+  @@index([recipientDeviceId, status, envelopeSequence])
 }
 
 model RefreshToken {
@@ -227,4 +236,26 @@ model SmsReport {
   createdAt DateTime     @default(now())
 
   @@index([phoneHash, createdAt])
+}
+
+model Group {
+  id                 String         @id @default(uuid()) @db.Uuid
+  encryptedMetadata  Json           // Encrypted Group Name & Photo
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
+  members            GroupMember[]
+  messages           Message[]
+}
+
+model GroupMember {
+  groupId   String   @db.Uuid
+  userId    String   @db.Uuid
+  role      String   @default("MEMBER") // ADMIN, MEMBER
+  joinedAt  DateTime @default(now())
+
+  group     Group    @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([groupId, userId])
+  @@index([userId])
 }
