@@ -150,6 +150,40 @@ export class GroupsService {
     return { success: true, messageId: result.id, queued: true };
   }
 
+  async findById(id: string) {
+    const group = await this.prisma.group.findUnique({
+      where: { id },
+      include: {
+        members: true,
+        messages: { orderBy: { threadSequence: 'asc' } },
+      },
+    });
+    if (!group) {
+      throw new NotFoundException('Group not found');
+    }
+    return group;
+  }
+
+  async findByUser(userId: string) {
+    return this.prisma.group.findMany({
+      where: { members: { some: { userId } } },
+      include: {
+        members: true,
+        messages: { orderBy: { threadSequence: 'asc' } },
+      },
+      orderBy: { updatedAt: 'desc' },
+    });
+  }
+
+  async assertGroupMember(userId: string, groupId: string) {
+    const member = await this.prisma.groupMember.findUnique({
+      where: { groupId_userId: { groupId, userId } },
+    });
+    if (!member) {
+      throw new ForbiddenException('Not a member of this group');
+    }
+  }
+
   private async assertGroupAdmin(userId: string, groupId: string) {
     const member = await this.prisma.groupMember.findUnique({
       where: { groupId_userId: { groupId, userId } },

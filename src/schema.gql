@@ -1,0 +1,65 @@
+# ------------------------------------------------------
+# THIS FILE WAS AUTOMATICALLY GENERATED (DO NOT MODIFY)
+# ------------------------------------------------------
+
+"""
+A date-time string at UTC, such as 2019-12-03T09:54:33Z, compliant with the date-time format.
+"""
+scalar DateTime
+
+type DirectThread {
+  createdAt: DateTime!
+  id: ID!
+  latestSequence: Int!
+  messages: [Message!]!
+  updatedAt: DateTime!
+  userA: User
+  userAId: ID!
+  userB: User
+  userBId: ID!
+}
+
+type Group {
+  createdAt: DateTime!
+  id: ID!
+  members: [GroupMember!]!
+  messages: [Message!]!
+  updatedAt: DateTime!
+}
+
+type GroupMember {
+  groupId: ID!
+  joinedAt: DateTime!
+  role: String!
+  user: User
+  userId: ID!
+}
+
+"""Arbitrary JSON value"""
+scalar JSON
+
+type Message {
+  createdAt: DateTime!
+  groupId: ID
+  id: ID!
+  senderDeviceId: ID!
+  senderUserId: ID!
+  threadId: ID
+  threadSequence: Int!
+}
+
+type Query {
+  directThread(id: ID!): DirectThread
+  directThreads(userId: ID!): [DirectThread!]!
+  group(id: ID!): Group
+  groups(userId: ID!): [Group!]!
+}
+
+type User {
+  createdAt: DateTime!
+  encryptedProfile: JSON
+  id: ID!
+  profileAvatarUrl: String
+  profileKeyHash: String
+  username: String
+}

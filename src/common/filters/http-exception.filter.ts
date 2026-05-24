@@ -6,6 +6,7 @@ import {
   HttpStatus,
   Logger,
 } from '@nestjs/common';
+import { GqlArgumentsHost } from '@nestjs/graphql';
 import { Request, Response } from 'express';
 
 @Catch()
@@ -13,6 +14,11 @@ export class HttpExceptionFilter implements ExceptionFilter {
   private readonly logger = new Logger(HttpExceptionFilter.name);
 
   catch(exception: unknown, host: ArgumentsHost) {
+    const gqlHost = GqlArgumentsHost.create(host);
+    if (gqlHost.getContext()) {
+      return;
+    }
+
     const ctx = host.switchToHttp();
     const response = ctx.getResponse<Response>();
     const request = ctx.getRequest<Request>();

@@ -24,7 +24,6 @@ export class AuthController {
 
   @Throttle({ auth: { limit: 5, ttl: 60_000 } })
   @Post('otp/verify')
-  @HttpCode(200)
   verifyOtp(@Body() dto: VerifyOtpDto) {
     return this.authService.verifyOtp(dto);
   }

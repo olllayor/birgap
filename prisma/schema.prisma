@@ -58,11 +58,13 @@ model User {
   encryptedProfile  Json?
   profileKeyHash    String?
 
-  devices       Device[]
-  refreshTokens RefreshToken[]
-  sentMessages  Message[]      @relation("SentMessages")
-  backups       BackupBlob[]
-  groupMembers  GroupMember[]
+  devices         Device[]
+  refreshTokens   RefreshToken[]
+  sentMessages    Message[]        @relation("SentMessages")
+  threadsAsUserA  DirectThread[]   @relation("ThreadUserA")
+  threadsAsUserB  DirectThread[]   @relation("ThreadUserB")
+  backups         BackupBlob[]
+  groupMembers    GroupMember[]
 }
 
 model Device {
@@ -126,6 +128,8 @@ model DirectThread {
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
+  userA    User      @relation("ThreadUserA", fields: [userAId], references: [id], onDelete: Cascade)
+  userB    User      @relation("ThreadUserB", fields: [userBId], references: [id], onDelete: Cascade)
   messages Message[]
 
   @@unique([userAId, userBId])

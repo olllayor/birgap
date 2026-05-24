@@ -2,9 +2,13 @@ import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import { APP_GUARD } from '@nestjs/core';
-import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
+import { ThrottlerModule } from '@nestjs/throttler';
 import { ScheduleModule } from '@nestjs/schedule';
 import { BullModule } from '@nestjs/bullmq';
+import { GraphQLModule } from '@nestjs/graphql';
+import { ApolloDriver, ApolloDriverConfig } from '@nestjs/apollo';
+import { join } from 'node:path';
+import depthLimit = require('graphql-depth-limit');
 import { AuthModule } from './auth/auth.module';
 import { BackupsModule } from './backups/backups.module';
 import { DevicesModule } from './devices/devices.module';
@@ -19,6 +23,8 @@ import { RedisModule } from './redis/redis.module';
 import { StorageModule } from './storage/storage.module';
 import { UsersModule } from './users/users.module';
 import { GroupsModule } from './groups/groups.module';
+import { DirectThreadsModule } from './direct-threads/direct-threads.module';
+import { GqlThrottlerGuard } from './common/guards/gql-throttler.guard';
 import { PruneService } from './common/tasks/prune.service';
 
 @Module({
@@ -57,6 +63,22 @@ import { PruneService } from './common/tasks/prune.service';
         };
       },
     }),
+    GraphQLModule.forRootAsync<ApolloDriverConfig>({
+      driver: ApolloDriver,
+      imports: [ConfigModule],
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => {
+        const isProd = config.get('NODE_ENV') === 'production';
+        return {
+          autoSchemaFile: join(process.cwd(), 'src/schema.gql'),
+          sortSchema: true,
+          playground: !isProd,
+          introspection: !isProd,
+          validationRules: [depthLimit(5)],
+          context: ({ req }) => ({ req }),
+        };
+      },
+    }),
     PrismaModule,
     RedisModule,
     AuthModule,
@@ -69,15 +91,15 @@ import { PruneService } from './common/tasks/prune.service';
     BackupsModule,
     StorageModule,
     GroupsModule,
+    DirectThreadsModule,
     HealthModule,
   ],
   providers: [
     PruneService,
     {
       provide: APP_GUARD,
-      useClass: ThrottlerGuard,
+      useClass: GqlThrottlerGuard,
     },
   ],
 })
 export class AppModule {}
-

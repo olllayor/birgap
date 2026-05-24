@@ -21,8 +21,12 @@ export class JwtAuthGuard implements CanActivate {
     private readonly prisma: PrismaService,
   ) {}
 
+  protected getRequest(context: ExecutionContext): AuthenticatedRequest {
+    return context.switchToHttp().getRequest();
+  }
+
   async canActivate(context: ExecutionContext): Promise<boolean> {
-    const request = context.switchToHttp().getRequest<AuthenticatedRequest>();
+    const request = this.getRequest(context);
     const header = request.headers.authorization;
 
     if (!header?.startsWith('Bearer ')) {

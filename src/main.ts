@@ -13,7 +13,18 @@ async function bootstrap() {
   app.enableShutdownHooks();
   const config = app.get(ConfigService);
 
-  app.use(helmet());
+  const isProd = config.get('NODE_ENV') === 'production';
+
+  app.use(
+    helmet(
+      isProd
+        ? undefined
+        : {
+            // GraphQL Playground relies on inline scripts/styles.
+            contentSecurityPolicy: false,
+          },
+    ),
+  );
   app.enableCors({
     origin: config.get<string>('APP_ORIGIN') ?? true,
     credentials: true,

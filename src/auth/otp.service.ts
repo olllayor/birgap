@@ -152,6 +152,10 @@ export class OtpService {
   }
 
   private generateOtpCode(): string {
+    const mockCode = this.config.get<string>('OTP_MOCK_CODE');
+    if (mockCode) {
+      return mockCode;
+    }
     return String(Math.floor(100000 + Math.random() * 900000));
   }
 

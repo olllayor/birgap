@@ -58,6 +58,7 @@ export class DevicesService {
   }
 
   async list(userId: string) {
+    console.log('here i am ');
     return this.prisma.device.findMany({
       where: { userId, active: true },
       orderBy: { createdAt: 'asc' },
