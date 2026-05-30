@@ -3,23 +3,23 @@ import { Field, ID, Int, ObjectType } from '@nestjs/graphql';
 @ObjectType('Message')
 export class MessageType {
   @Field(() => ID)
-  id: string;
+  id!: string;
 
   @Field(() => ID, { nullable: true })
-  threadId: string | null;
+  threadId!: string | null;
 
   @Field(() => ID, { nullable: true })
-  groupId: string | null;
+  groupId!: string | null;
 
   @Field(() => ID)
-  senderUserId: string;
+  senderUserId!: string;
 
   @Field(() => ID)
-  senderDeviceId: string;
+  senderDeviceId!: string;
 
   @Field(() => Int)
-  threadSequence: number;
+  threadSequence!: number;
 
   @Field()
-  createdAt: Date;
+  createdAt!: Date;
 }

@@ -31,4 +31,5 @@ export const envValidationSchema = Joi.object({
   R2_PRESIGNED_GET_TTL_SECONDS: Joi.number().default(300),
   APNS_TEAM_ID: Joi.string().allow('').optional(),
   HMS_APP_ID: Joi.string().allow('').optional(),
+  INTERNAL_API_KEY: Joi.string().min(32).required(),
 });

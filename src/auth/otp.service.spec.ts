@@ -1,17 +1,15 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
-import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
+import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import { OtpService } from './otp.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { SMS_SERVICE_TOKEN } from '../sms/sms.module';
 import { OtpStatus } from '@prisma/client';
 
 describe('OtpService', () => {
   let service: OtpService;
-  let prisma: PrismaService;
-  let smsService: any;
+  let mockSmsQueue: { add: jest.Mock };
 
-  let mockActiveOtp: any = null;
+  let mockActiveOtp: unknown = null;
 
   const mockOtpModel = {
     findFirst: jest.fn().mockImplementation(() => mockActiveOtp),
@@ -19,15 +17,12 @@ describe('OtpService', () => {
     update: jest.fn(),
   };
 
-  const mockSmsService = {
-    sendOtp: jest.fn(),
-  };
-
   beforeEach(async () => {
     mockActiveOtp = null;
     mockOtpModel.findFirst.mockClear();
     mockOtpModel.create.mockClear();
     mockOtpModel.update.mockClear();
+    mockSmsQueue = { add: jest.fn().mockResolvedValue({ id: 'job-1' }) };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -40,13 +35,11 @@ describe('OtpService', () => {
           },
         },
         { provide: ConfigService, useValue: { get: jest.fn((key: string) => undefined) } },
-        { provide: SMS_SERVICE_TOKEN, useValue: mockSmsService },
+        { provide: 'BullQueue_sms-otp', useValue: mockSmsQueue },
       ],
     }).compile();
 
     service = module.get<OtpService>(OtpService);
-    prisma = module.get<PrismaService>(PrismaService);
-    smsService = module.get(SMS_SERVICE_TOKEN);
   });
 
   afterEach(() => {
@@ -54,16 +47,19 @@ describe('OtpService', () => {
   });
 
   describe('requestOtp', () => {
-    it('should send new OTP successfully', async () => {
+    it('should enqueue OTP and return success immediately', async () => {
       mockActiveOtp = null;
       mockOtpModel.create.mockResolvedValue({ id: '1', code: '123456' });
-      mockSmsService.sendOtp.mockResolvedValue({ success: true });
 
       const result = await service.requestOtp('+998901234567');
 
       expect(result.success).toBe(true);
       expect(mockOtpModel.create).toHaveBeenCalled();
-      expect(mockSmsService.sendOtp).toHaveBeenCalled();
+      expect(mockSmsQueue.add).toHaveBeenCalledWith('send-otp', {
+        phoneHash: expect.any(String),
+        phone: '+998901234567',
+        code: expect.any(String),
+      });
     });
 
     it('should not resend within cooldown period', async () => {
@@ -80,15 +76,16 @@ describe('OtpService', () => {
       expect(result.success).toBe(true);
       expect(result.message).toContain('already sent');
       expect(mockOtpModel.create).not.toHaveBeenCalled();
+      expect(mockSmsQueue.add).not.toHaveBeenCalled();
     });
 
-    it('should throw if SMS sending fails', async () => {
+    it('should propagate queue errors when Redis is unreachable', async () => {
       mockActiveOtp = null;
       mockOtpModel.create.mockResolvedValue({ id: '1' });
-      mockSmsService.sendOtp.mockResolvedValue({ success: false, error: 'API error' });
+      mockSmsQueue.add.mockRejectedValue(new Error('Redis connection refused'));
 
       await expect(service.requestOtp('+998901234567')).rejects.toThrow(
-        BadRequestException,
+        'Redis connection refused',
       );
     });
   });

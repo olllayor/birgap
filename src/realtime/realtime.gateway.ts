@@ -34,7 +34,7 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
   private isShuttingDown = false;
 
   @WebSocketServer()
-  server: Server;
+  server!: Server;
 
   constructor(
     private readonly realtimeService: RealtimeService,
@@ -153,7 +153,11 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
     for (const envelope of message.envelopes) {
       this.server.to(`device:${envelope.recipientDeviceId}`).emit('message.new', envelope);
     }
-    this.push.sendMessageWakeup(message.envelopes).catch(() => {});
+    this.push.sendMessageWakeup(message.envelopes).catch((error) => {
+      this.logger.warn(
+        `Failed to enqueue push wakeup: ${error instanceof Error ? error.message : error}`,
+      );
+    });
   }
 
   @OnEvent('message.ack')

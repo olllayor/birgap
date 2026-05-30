@@ -12,9 +12,7 @@
     "baseUrl": "./",
     "incremental": true,
     "strict": true,
-    "skipLibCheck": true,
-    "strictPropertyInitialization": false,
-    "noImplicitAny": false
+    "skipLibCheck": true
   },
   "exclude": ["ui-lab", "node_modules", "dist"]
 }

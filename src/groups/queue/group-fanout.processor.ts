@@ -1,18 +1,34 @@
-import { Processor, WorkerHost } from '@nestjs/bullmq';
+import { Logger } from '@nestjs/common';
+import { Processor, WorkerHost, OnWorkerEvent } from '@nestjs/bullmq';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { Job } from 'bullmq';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { QueueMetrics } from '../../metrics/queue.metrics';
 
-@Processor('group-fanout')
+export interface GroupFanoutJobData {
+  messageId: string;
+  groupId: string;
+  senderUserId: string;
+  senderDeviceId: string;
+  ciphertext: unknown;
+  threadSequence: number;
+  createdAt: string;
+}
+
+@Processor('group-fanout', { concurrency: 5 })
 export class GroupFanoutProcessor extends WorkerHost {
+  private readonly logger = new Logger(GroupFanoutProcessor.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly events: EventEmitter2,
+    private readonly queueMetrics: QueueMetrics,
   ) {
     super();
   }
 
-  async process(job: Job<any>): Promise<any> {
+  async process(job: Job<GroupFanoutJobData>): Promise<{ fannedOutTo: number }> {
     const { messageId, groupId, senderUserId, senderDeviceId, ciphertext, threadSequence, createdAt } = job.data;
 
     // 1. Fetch all active devices for group members in a single query
@@ -39,7 +55,7 @@ export class GroupFanoutProcessor extends WorkerHost {
         messageId,
         recipientUserId: device.userId,
         recipientDeviceId: device.id,
-        ciphertext: ciphertext as any,
+        ciphertext: ciphertext as Prisma.InputJsonValue,
         status: 'PENDING' as const,
       })),
       skipDuplicates: true,
@@ -79,5 +95,17 @@ export class GroupFanoutProcessor extends WorkerHost {
     this.events.emit('message.created', messageEventPayload);
 
     return { fannedOutTo: targetDevices.length };
+  }
+
+  @OnWorkerEvent('completed')
+  onCompleted(job: Job<GroupFanoutJobData>) {
+    this.queueMetrics.recordCompleted('group-fanout');
+    this.logger.debug(`Fanout job ${job.id} completed`);
+  }
+
+  @OnWorkerEvent('failed')
+  onFailed(job: Job<GroupFanoutJobData>, error: Error) {
+    this.queueMetrics.recordFailed('group-fanout');
+    this.logger.error(`Fanout job ${job.id} failed: ${error.message}`);
   }
 }

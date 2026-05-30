@@ -10,7 +10,7 @@ export class RegisterDeviceDto {
 
   @ApiProperty({ enum: DevicePlatform })
   @IsEnum(DevicePlatform)
-  platform: DevicePlatform;
+  platform!: DevicePlatform;
 
   @ApiPropertyOptional()
   @IsOptional()
@@ -20,7 +20,7 @@ export class RegisterDeviceDto {
   @ApiProperty()
   @IsString()
   @MinLength(16)
-  identityPublicKey: string;
+  identityPublicKey!: string;
 
   @ApiPropertyOptional()
   @IsOptional()

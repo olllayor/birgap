@@ -1,5 +1,6 @@
 import { UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { PrismaService } from '../prisma/prisma.service';
 import { RealtimeService } from './realtime.service';
 
 describe('RealtimeService', () => {
@@ -13,7 +14,7 @@ describe('RealtimeService', () => {
       },
     };
     const config = { get: jest.fn().mockReturnValue(60) } as unknown as ConfigService;
-    const service = new RealtimeService(prisma as any, config);
+    const service = new RealtimeService(prisma as unknown as PrismaService, config);
 
     const result = await service.createSocketTicket({ userId: 'user-1', sessionId: 'session-1' }, 'device-1');
 
@@ -39,10 +40,10 @@ describe('RealtimeService', () => {
       },
     };
     const prisma = {
-      $transaction: jest.fn((callback) => callback(tx)),
+      $transaction: jest.fn((callback: (tx: Record<string, unknown>) => unknown) => callback(tx as Record<string, unknown>)),
     };
     const config = { get: jest.fn().mockReturnValue(60) } as unknown as ConfigService;
-    const service = new RealtimeService(prisma as any, config);
+    const service = new RealtimeService(prisma as unknown as PrismaService, config);
 
     await expect(service.consumeSocketTicket('ticket', 'socket-1')).rejects.toBeInstanceOf(
       UnauthorizedException,

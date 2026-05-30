@@ -5,15 +5,15 @@ export class RotateSignedPrekeyDto {
   @ApiProperty()
   @IsInt()
   @Min(1)
-  keyId: number;
+  keyId!: number;
 
   @ApiProperty()
   @IsString()
   @MinLength(16)
-  publicKey: string;
+  publicKey!: string;
 
   @ApiProperty()
   @IsString()
   @MinLength(16)
-  signature: string;
+  signature!: string;
 }

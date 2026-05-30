@@ -5,5 +5,5 @@ export class RequestOtpDto {
   @ApiProperty({ example: '+998901112233' })
   @IsString()
   @IsPhoneNumber()
-  phone: string;
+  phone!: string;
 }

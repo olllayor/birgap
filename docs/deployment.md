@@ -521,9 +521,18 @@ ALTER SYSTEM SET effective_cache_size = '1536MB';
 # Increase max memory
 maxmemory 2gb
 
-# Eviction policy
-maxmemory-policy allkeys-lru
+# Eviction policy — MUST be noeviction for BullMQ queue safety.
+# allkeys-lru will silently evict queued jobs when memory pressure hits,
+# causing message delivery holes with no error or retry.
+maxmemory-policy noeviction
 ```
+
+> **Warning:** If you share this Redis instance with application caches
+> (session store, rate limiter, etc.), those caches will start returning
+> errors when Redis hits `maxmemory` under `noeviction`. For production,
+> use a **separate Redis instance** (or at minimum a separate Redis DB)
+> for BullMQ queues vs. cache data. Queue Redis needs `noeviction`;
+> cache Redis can use `allkeys-lru`.
 
 ## Security Hardening
 

@@ -4,13 +4,13 @@ import { IsDefined, IsString, IsUUID, MaxLength, MinLength } from 'class-validat
 export class SendGroupMessageDto {
   @ApiProperty()
   @IsUUID()
-  senderDeviceId: string;
+  senderDeviceId!: string;
 
   @ApiProperty()
   @IsString()
   @MinLength(8)
   @MaxLength(128)
-  idempotencyKey: string;
+  idempotencyKey!: string;
 
   @ApiProperty({ description: 'Opaque group-key-encrypted payload.' })
   @IsDefined()

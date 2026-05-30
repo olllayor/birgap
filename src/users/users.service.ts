@@ -1,4 +1,5 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { UpdateProfileDto } from './dto/profile.dto';
 
@@ -122,7 +123,7 @@ export class UsersService {
       data: {
         ...(dto.username !== undefined && { username: dto.username }),
         ...(dto.profileAvatarUrl !== undefined && { profileAvatarUrl: dto.profileAvatarUrl }),
-        ...(dto.encryptedProfile !== undefined && { encryptedProfile: dto.encryptedProfile }),
+        ...(dto.encryptedProfile !== undefined && { encryptedProfile: dto.encryptedProfile as Prisma.InputJsonValue }),
         ...(dto.profileKeyHash !== undefined && { profileKeyHash: dto.profileKeyHash }),
       },
       select: {

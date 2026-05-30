@@ -12,7 +12,7 @@ export class UpdateProfileDto {
 
   @IsOptional()
   @IsObject()
-  encryptedProfile?: any;
+  encryptedProfile?: unknown;
 
   @IsOptional()
   @IsString()

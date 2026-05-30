@@ -1,4 +1,5 @@
 import { EventEmitter2 } from '@nestjs/event-emitter';
+import { PrismaService } from '../prisma/prisma.service';
 import { MessagesService } from './messages.service';
 
 describe('MessagesService', () => {
@@ -18,7 +19,7 @@ describe('MessagesService', () => {
       },
     };
     const events = { emit: jest.fn() } as unknown as EventEmitter2;
-    const service = new MessagesService(prisma as any, events);
+    const service = new MessagesService(prisma as unknown as PrismaService, events);
 
     await expect(
       service.send('user-1', {
@@ -61,14 +62,14 @@ describe('MessagesService', () => {
 
     const makePrisma = (tx: ReturnType<typeof makeTx>) => ({
       message: { findUnique: jest.fn().mockResolvedValue(null) },
-      $transaction: jest.fn((callback: any) => callback(tx)),
+      $transaction: jest.fn((callback: (tx: ReturnType<typeof makeTx>) => unknown) => callback(tx)),
     });
 
     it('creates message with single combined device query', async () => {
       const tx = makeTx();
       const prisma = makePrisma(tx);
       const events = { emit: jest.fn() } as unknown as EventEmitter2;
-      const service = new MessagesService(prisma as any, events);
+      const service = new MessagesService(prisma as unknown as PrismaService, events);
 
       const result = await service.send('user-1', {
         senderDeviceId: 'device-1',
@@ -114,7 +115,7 @@ describe('MessagesService', () => {
       const envelopes = Array.from({ length: 50 }, (_, i) => makeEnvelope(BigInt(i + 1)));
       const prisma = makePrisma(envelopes);
       const events = { emit: jest.fn() } as unknown as EventEmitter2;
-      const service = new MessagesService(prisma as any, events);
+      const service = new MessagesService(prisma as unknown as PrismaService, events);
 
       const result = await service.getPending('user-1', 'device-1', undefined, 50);
 
@@ -129,7 +130,7 @@ describe('MessagesService', () => {
       const envelopes = [makeEnvelope(1n), makeEnvelope(2n)];
       const prisma = makePrisma(envelopes);
       const events = { emit: jest.fn() } as unknown as EventEmitter2;
-      const service = new MessagesService(prisma as any, events);
+      const service = new MessagesService(prisma as unknown as PrismaService, events);
 
       const result = await service.getPending('user-1', 'device-1', undefined, 50);
 
@@ -140,7 +141,7 @@ describe('MessagesService', () => {
     it('returns hasMore false for empty result set', async () => {
       const prisma = makePrisma([]);
       const events = { emit: jest.fn() } as unknown as EventEmitter2;
-      const service = new MessagesService(prisma as any, events);
+      const service = new MessagesService(prisma as unknown as PrismaService, events);
 
       const result = await service.getPending('user-1', 'device-1', undefined, 50);
 
@@ -151,7 +152,7 @@ describe('MessagesService', () => {
     it('uses after cursor to filter envelopes', async () => {
       const prisma = makePrisma([makeEnvelope(51n), makeEnvelope(52n)]);
       const events = { emit: jest.fn() } as unknown as EventEmitter2;
-      const service = new MessagesService(prisma as any, events);
+      const service = new MessagesService(prisma as unknown as PrismaService, events);
 
       await service.getPending('user-1', 'device-1', '50', 50);
 
@@ -167,7 +168,7 @@ describe('MessagesService', () => {
     it('orders by envelopeSequence ascending', async () => {
       const prisma = makePrisma([]);
       const events = { emit: jest.fn() } as unknown as EventEmitter2;
-      const service = new MessagesService(prisma as any, events);
+      const service = new MessagesService(prisma as unknown as PrismaService, events);
 
       await service.getPending('user-1', 'device-1', undefined, 50);
 
@@ -181,7 +182,7 @@ describe('MessagesService', () => {
     it('defaults limit to 50', async () => {
       const prisma = makePrisma([]);
       const events = { emit: jest.fn() } as unknown as EventEmitter2;
-      const service = new MessagesService(prisma as any, events);
+      const service = new MessagesService(prisma as unknown as PrismaService, events);
 
       await service.getPending('user-1', 'device-1');
 

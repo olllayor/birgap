@@ -5,29 +5,29 @@ import { UserType } from '../../users/models/user.model';
 @ObjectType('DirectThread')
 export class DirectThreadType {
   @Field(() => ID)
-  id: string;
+  id!: string;
 
   @Field(() => ID)
-  userAId: string;
+  userAId!: string;
 
   @Field(() => ID)
-  userBId: string;
+  userBId!: string;
 
   @Field(() => Int)
-  latestSequence: number;
+  latestSequence!: number;
 
   @Field()
-  createdAt: Date;
+  createdAt!: Date;
 
   @Field()
-  updatedAt: Date;
+  updatedAt!: Date;
 
   @Field(() => UserType, { nullable: true })
-  userA: UserType | null;
+  userA!: UserType | null;
 
   @Field(() => UserType, { nullable: true })
-  userB: UserType | null;
+  userB!: UserType | null;
 
   @Field(() => [MessageType])
-  messages: MessageType[];
+  messages!: MessageType[];
 }

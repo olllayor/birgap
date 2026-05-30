@@ -1,6 +1,7 @@
 import { Injectable, ForbiddenException, NotFoundException, BadRequestException } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { RedisService } from '../redis/redis.service';
 import { CreateGroupDto } from './dto/create-group.dto';
@@ -20,7 +21,7 @@ export class GroupsService {
     const group = await this.prisma.$transaction(async (tx) => {
       const created = await tx.group.create({
         data: {
-          encryptedMetadata: dto.encryptedMetadata as any,
+          encryptedMetadata: dto.encryptedMetadata as Prisma.InputJsonValue,
           members: {
             create: memberIds.map((userId) => ({
               userId,

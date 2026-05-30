@@ -14,9 +14,8 @@ export class HttpExceptionFilter implements ExceptionFilter {
   private readonly logger = new Logger(HttpExceptionFilter.name);
 
   catch(exception: unknown, host: ArgumentsHost) {
-    const gqlHost = GqlArgumentsHost.create(host);
-    if (gqlHost.getContext()) {
-      return;
+    if (host.getType() !== 'http') {
+      throw exception;
     }
 
     const ctx = host.switchToHttp();

@@ -7,9 +7,9 @@ export type AckStatus = (typeof ACK_STATUSES)[number];
 export class AckMessageDto {
   @ApiProperty()
   @IsUUID()
-  deviceId: string;
+  deviceId!: string;
 
   @ApiProperty({ enum: ACK_STATUSES })
   @IsIn(ACK_STATUSES)
-  status: AckStatus;
+  status!: AckStatus;
 }

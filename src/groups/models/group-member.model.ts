@@ -4,17 +4,17 @@ import { UserType } from '../../users/models/user.model';
 @ObjectType('GroupMember')
 export class GroupMemberType {
   @Field(() => ID)
-  groupId: string;
+  groupId!: string;
 
   @Field(() => ID)
-  userId: string;
+  userId!: string;
 
   @Field()
-  role: string;
+  role!: string;
 
   @Field()
-  joinedAt: Date;
+  joinedAt!: Date;
 
   @Field(() => UserType, { nullable: true })
-  user: UserType | null;
+  user!: UserType | null;
 }

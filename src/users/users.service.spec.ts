@@ -1,4 +1,5 @@
 import { NotFoundException, BadRequestException } from '@nestjs/common';
+import { PrismaService } from '../prisma/prisma.service';
 import { UsersService } from './users.service';
 
 describe('UsersService', () => {
@@ -29,9 +30,9 @@ describe('UsersService', () => {
           },
         ]),
       },
-      $transaction: jest.fn((callback) => callback(tx)),
+      $transaction: jest.fn((callback: (tx: Record<string, unknown>) => unknown) => callback(tx as Record<string, unknown>)),
     };
-    const service = new UsersService(prisma as any);
+    const service = new UsersService(prisma as unknown as PrismaService);
 
     await expect(service.getDeviceKeyBundles('user-1')).resolves.toMatchObject({
       userId: 'user-1',
@@ -50,7 +51,7 @@ describe('UsersService', () => {
     const prisma = {
       device: { findMany: jest.fn().mockResolvedValue([]) },
     };
-    const service = new UsersService(prisma as any);
+    const service = new UsersService(prisma as unknown as PrismaService);
 
     await expect(service.getDeviceKeyBundles('user-1')).rejects.toBeInstanceOf(NotFoundException);
   });
@@ -63,7 +64,7 @@ describe('UsersService', () => {
       const prisma = {
         user: { findMany: jest.fn().mockResolvedValue(matchedUsers) },
       };
-      const service = new UsersService(prisma as any);
+      const service = new UsersService(prisma as unknown as PrismaService);
 
       await expect(service.syncContacts(['hash-1', 'hash-2'])).resolves.toEqual(matchedUsers);
       expect(prisma.user.findMany).toHaveBeenCalledWith({
@@ -83,7 +84,7 @@ describe('UsersService', () => {
     });
 
     it('throws BadRequestException when batch exceeds 1000 phone hashes', async () => {
-      const service = new UsersService({} as any);
+      const service = new UsersService({} as unknown as PrismaService);
       const phoneHashes = Array.from({ length: 1001 }, (_, i) => `hash-${i}`);
       await expect(service.syncContacts(phoneHashes)).rejects.toThrow(BadRequestException);
     });
@@ -98,7 +99,7 @@ describe('UsersService', () => {
           update: jest.fn().mockResolvedValue(mockUpdated),
         },
       };
-      const service = new UsersService(prisma as any);
+      const service = new UsersService(prisma as unknown as PrismaService);
 
       await expect(
         service.updateProfile('user-1', { username: 'bob_new', profileAvatarUrl: 'http://avatar' })
@@ -134,7 +135,7 @@ describe('UsersService', () => {
           findFirst: jest.fn().mockResolvedValue({ id: 'user-2', username: 'bob_new' }),
         },
       };
-      const service = new UsersService(prisma as any);
+      const service = new UsersService(prisma as unknown as PrismaService);
 
       await expect(
         service.updateProfile('user-1', { username: 'bob_new' })
@@ -144,7 +145,7 @@ describe('UsersService', () => {
 
   describe('searchByUsername', () => {
     it('throws if search query is less than 3 characters', async () => {
-      const service = new UsersService({} as any);
+      const service = new UsersService({} as unknown as PrismaService);
       await expect(service.searchByUsername('ab')).rejects.toThrow(BadRequestException);
     });
 
@@ -153,7 +154,7 @@ describe('UsersService', () => {
       const prisma = {
         user: { findMany: jest.fn().mockResolvedValue(mockResult) },
       };
-      const service = new UsersService(prisma as any);
+      const service = new UsersService(prisma as unknown as PrismaService);
 
       await expect(service.searchByUsername('ali')).resolves.toEqual(mockResult);
       expect(prisma.user.findMany).toHaveBeenCalledWith({

@@ -14,32 +14,32 @@ import {
 export class MessageEnvelopeDto {
   @ApiProperty()
   @IsUUID()
-  recipientDeviceId: string;
+  recipientDeviceId!: string;
 
   @ApiProperty({ description: 'Opaque client-encrypted payload.' })
   @IsDefined()
-  ciphertext: unknown;
+  ciphertext!: unknown;
 }
 
 export class SendMessageDto {
   @ApiProperty()
   @IsUUID()
-  senderDeviceId: string;
+  senderDeviceId!: string;
 
   @ApiProperty()
   @IsUUID()
-  recipientUserId: string;
+  recipientUserId!: string;
 
   @ApiProperty()
   @IsString()
   @MinLength(8)
   @MaxLength(128)
-  idempotencyKey: string;
+  idempotencyKey!: string;
 
   @ApiProperty({ type: [MessageEnvelopeDto] })
   @IsArray()
   @ArrayMinSize(1)
   @ValidateNested({ each: true })
   @Type(() => MessageEnvelopeDto)
-  envelopes: MessageEnvelopeDto[];
+  envelopes!: MessageEnvelopeDto[];
 }

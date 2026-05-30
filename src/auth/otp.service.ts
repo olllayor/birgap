@@ -5,20 +5,22 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { InjectQueue } from '@nestjs/bullmq';
+import { Queue } from 'bullmq';
 import { PrismaService } from '../prisma/prisma.service';
 import { OtpStatus } from '@prisma/client';
-import { SmsService, SMS_SERVICE_TOKEN } from '../sms/sms.module';
 import { Inject } from '@nestjs/common';
 import { sha256, normalizePhone, randomDigits } from '../common/utils/crypto.util';
 import { timingSafeEqual } from 'crypto';
+import { SmsOtpJobData } from '../sms/queue/sms-otp-job.interface';
 
 @Injectable()
 export class OtpService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
-    @Inject(SMS_SERVICE_TOKEN)
-    private readonly smsService: SmsService,
+    @InjectQueue('sms-otp')
+    private readonly smsQueue: Queue<SmsOtpJobData>,
   ) {}
 
   async requestOtp(phone: string) {
@@ -61,15 +63,11 @@ export class OtpService {
       },
     });
 
-    const sendResult = await this.smsService.sendOtp({
+    await this.smsQueue.add('send-otp', {
       phoneHash,
       phone: normalizedPhone,
       code,
     });
-
-    if (!sendResult.success) {
-      throw new BadRequestException('Failed to send OTP. Please try again.');
-    }
 
     return {
       success: true,

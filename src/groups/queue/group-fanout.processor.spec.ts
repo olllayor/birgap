@@ -1,37 +1,57 @@
-import { GroupFanoutProcessor } from './group-fanout.processor';
+import { EventEmitter2 } from '@nestjs/event-emitter';
+import { Job } from 'bullmq';
+import { PrismaService } from '../../prisma/prisma.service';
+import { QueueMetrics } from '../../metrics/queue.metrics';
+import { GroupFanoutJobData, GroupFanoutProcessor } from './group-fanout.processor';
 
 describe('GroupFanoutProcessor', () => {
-  let prisma: any;
-  let events: any;
   let processor: GroupFanoutProcessor;
 
+  const mockQueueMetrics = {
+    recordCompleted: jest.fn(),
+    recordFailed: jest.fn(),
+  } as unknown as QueueMetrics;
+
   beforeEach(() => {
-    prisma = {
+    const prisma = {
       device: {
         findMany: jest.fn(),
       },
       messageEnvelope: {
         createMany: jest.fn(),
       },
-    };
+    } as unknown as PrismaService;
 
-    events = {
+    const events = {
       emit: jest.fn(),
-    };
+    } as unknown as EventEmitter2;
 
-    processor = new GroupFanoutProcessor(prisma, events);
+    processor = new GroupFanoutProcessor(prisma, events, mockQueueMetrics);
   });
 
   it('fans out message to active devices excluding sender device and emits message.created event', async () => {
-    // Mock active devices for group members (single query)
-    prisma.device.findMany.mockResolvedValue([
-      { id: 'dev-1-sender', userId: 'user-1' },
-      { id: 'dev-1-sync', userId: 'user-1' },
-      { id: 'dev-2', userId: 'user-2' },
-      { id: 'dev-3', userId: 'user-3' },
-    ]);
+    // Need to access the mock prisma instance for assertions.
+    // Since processor stores it privately, we spy via the constructor.
+    // We'll re-instantiate here with refs we can access.
+    const prisma = {
+      device: {
+        findMany: jest.fn().mockResolvedValue([
+          { id: 'dev-1-sender', userId: 'user-1' },
+          { id: 'dev-1-sync', userId: 'user-1' },
+          { id: 'dev-2', userId: 'user-2' },
+          { id: 'dev-3', userId: 'user-3' },
+        ]),
+      },
+      messageEnvelope: {
+        createMany: jest.fn().mockResolvedValue({ count: 3 }),
+      },
+    } as unknown as PrismaService;
 
-    prisma.messageEnvelope.createMany.mockResolvedValue({ count: 3 });
+    const events = {
+      emit: jest.fn(),
+    } as unknown as EventEmitter2;
+
+    const testProcessor = new GroupFanoutProcessor(prisma, events, mockQueueMetrics);
 
     const job = {
       data: {
@@ -43,9 +63,9 @@ describe('GroupFanoutProcessor', () => {
         threadSequence: 5,
         createdAt: new Date('2026-05-20T00:00:00Z').toISOString(),
       },
-    } as any;
+    } as unknown as Job<GroupFanoutJobData>;
 
-    const result = await processor.process(job);
+    const result = await testProcessor.process(job);
     expect(result).toEqual({ fannedOutTo: 3 }); // dev-1-sync, dev-2, dev-3
 
     // Verify single combined query

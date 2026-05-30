@@ -5,21 +5,21 @@ export class PutBackupDto {
   @ApiProperty()
   @IsInt()
   @Min(1)
-  version: number;
+  version!: number;
 
   @ApiProperty({ description: 'R2 bucket key returned from the upload-url endpoint.' })
   @IsString()
   @MinLength(1)
-  bucketKey: string;
+  bucketKey!: string;
 
   @ApiProperty()
   @IsString()
   @MinLength(16)
   @MaxLength(256)
-  sha256: string;
+  sha256!: string;
 
   @ApiProperty()
   @IsInt()
   @Min(1)
-  sizeBytes: number;
+  sizeBytes!: number;
 }

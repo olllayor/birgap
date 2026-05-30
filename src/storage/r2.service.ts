@@ -8,10 +8,10 @@ import { randomUUID } from 'crypto';
 @Injectable()
 export class R2Service implements OnModuleInit {
   private readonly logger = new Logger(R2Service.name);
-  private client: S3Client;
-  private bucket: string;
-  private putTtl: number;
-  private getTtl: number;
+  private client!: S3Client;
+  private bucket!: string;
+  private putTtl!: number;
+  private getTtl!: number;
 
   constructor(private readonly config: ConfigService) {}
 
