@@ -35,36 +35,36 @@ export class MessagesService {
 
     try {
       const created = await this.prisma.$transaction(async (tx) => {
-        const senderDevice = await tx.device.findFirst({
-          where: { id: dto.senderDeviceId, userId: senderUserId, active: true },
+        const allDevices = await tx.device.findMany({
+          where: {
+            active: true,
+            OR: [
+              { id: dto.senderDeviceId },
+              { userId: dto.recipientUserId },
+              { userId: senderUserId, id: { not: dto.senderDeviceId } },
+            ],
+          },
+          select: { id: true, userId: true },
         });
-        if (!senderDevice) {
+
+        const senderDevice = allDevices.find((d) => d.id === dto.senderDeviceId);
+        if (!senderDevice || senderDevice.userId !== senderUserId) {
           throw new ForbiddenException('Sender device is not active for this user');
         }
         if (senderUserId === dto.recipientUserId) {
           throw new BadRequestException('Recipient must be another user');
         }
 
-        const recipientDevices = await tx.device.findMany({
-          where: { userId: dto.recipientUserId, active: true },
-          select: { id: true, userId: true },
-        });
+        const recipientDevices = allDevices.filter((d) => d.userId === dto.recipientUserId);
         if (recipientDevices.length === 0) {
           throw new NotFoundException('Recipient has no active devices');
         }
 
-        const senderSyncDevices = await tx.device.findMany({
-          where: {
-            userId: senderUserId,
-            active: true,
-            id: { not: dto.senderDeviceId },
-          },
-          select: { id: true, userId: true },
-        });
-
-        const allowedDevices = [...recipientDevices, ...senderSyncDevices];
+        const senderSyncDeviceIds = new Set(
+          allDevices.filter((d) => d.userId === senderUserId && d.id !== dto.senderDeviceId).map((d) => d.id),
+        );
         const recipientDeviceIds = new Set(recipientDevices.map((device) => device.id));
-        const allowedDeviceIds = new Set(allowedDevices.map((device) => device.id));
+        const allowedDeviceIds = new Set([...recipientDeviceIds, ...senderSyncDeviceIds]);
         const envelopeDeviceIds = new Set(dto.envelopes.map((envelope) => envelope.recipientDeviceId));
 
         for (const deviceId of recipientDeviceIds) {
@@ -99,13 +99,10 @@ export class MessagesService {
             threadSequence: sequencedThread.latestSequence,
             envelopes: {
               create: dto.envelopes.map((envelope) => {
-                const device = allowedDevices.find((candidate) => candidate.id === envelope.recipientDeviceId);
-                if (!device) {
-                  throw new BadRequestException('Invalid envelope recipient device');
-                }
+                const isRecipientDevice = recipientDeviceIds.has(envelope.recipientDeviceId);
                 return {
-                  recipientUserId: device.userId,
-                  recipientDeviceId: device.id,
+                  recipientUserId: isRecipientDevice ? dto.recipientUserId : senderUserId,
+                  recipientDeviceId: envelope.recipientDeviceId,
                   ciphertext: envelope.ciphertext as Prisma.InputJsonValue,
                 };
               }),

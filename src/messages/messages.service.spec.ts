@@ -34,6 +34,65 @@ describe('MessagesService', () => {
     expect(events.emit).not.toHaveBeenCalled();
   });
 
+  describe('send', () => {
+    const makeTx = () => ({
+      device: {
+        findMany: jest.fn().mockResolvedValue([
+          { id: 'device-1', userId: 'user-1' },
+          { id: 'device-2', userId: 'user-2' },
+        ]),
+      },
+      directThread: {
+        upsert: jest.fn().mockResolvedValue({ id: 'thread-1' }),
+        update: jest.fn().mockResolvedValue({ id: 'thread-1', latestSequence: 8 }),
+      },
+      message: {
+        create: jest.fn().mockResolvedValue({
+          id: 'message-1',
+          threadId: 'thread-1',
+          senderUserId: 'user-1',
+          senderDeviceId: 'device-1',
+          threadSequence: 8,
+          createdAt: new Date(),
+          envelopes: [{ id: 'envelope-1' }],
+        }),
+      },
+    });
+
+    const makePrisma = (tx: ReturnType<typeof makeTx>) => ({
+      message: { findUnique: jest.fn().mockResolvedValue(null) },
+      $transaction: jest.fn((callback: any) => callback(tx)),
+    });
+
+    it('creates message with single combined device query', async () => {
+      const tx = makeTx();
+      const prisma = makePrisma(tx);
+      const events = { emit: jest.fn() } as unknown as EventEmitter2;
+      const service = new MessagesService(prisma as any, events);
+
+      const result = await service.send('user-1', {
+        senderDeviceId: 'device-1',
+        recipientUserId: 'user-2',
+        idempotencyKey: 'idem-1',
+        envelopes: [{ recipientDeviceId: 'device-2', ciphertext: { body: 'enc' } }],
+      });
+
+      expect(result.id).toBe('message-1');
+      expect(tx.device.findMany).toHaveBeenCalledWith({
+        where: {
+          active: true,
+          OR: [
+            { id: 'device-1' },
+            { userId: 'user-2' },
+            { userId: 'user-1', id: { not: 'device-1' } },
+          ],
+        },
+        select: { id: true, userId: true },
+      });
+      expect(events.emit).toHaveBeenCalledWith('message.created', expect.anything());
+    });
+  });
+
   describe('getPending', () => {
     const makePrisma = (envelopes: unknown[]) => ({
       device: {

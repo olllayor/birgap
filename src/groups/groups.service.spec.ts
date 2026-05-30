@@ -3,6 +3,7 @@ import { GroupsService } from './groups.service';
 
 describe('GroupsService', () => {
   let prisma: any;
+  let redis: any;
   let queue: any;
   let service: GroupsService;
 
@@ -25,11 +26,16 @@ describe('GroupsService', () => {
       $transaction: jest.fn((callback) => callback(prisma)),
     };
 
+    redis = {
+      setGroupMemberIds: jest.fn().mockResolvedValue(undefined),
+      invalidateGroupMemberIds: jest.fn().mockResolvedValue(undefined),
+    };
+
     queue = {
       add: jest.fn(),
     };
 
-    service = new GroupsService(prisma, queue);
+    service = new GroupsService(prisma, redis, queue);
   });
 
   describe('createGroup', () => {
@@ -149,7 +155,7 @@ describe('GroupsService', () => {
       prisma.groupMember.findUnique.mockResolvedValue({ role: 'MEMBER' });
       prisma.message.findUnique.mockResolvedValue(null);
       prisma.message.findFirst.mockResolvedValue({ threadSequence: 5 }); // previous max sequence
-      const mockCreated = { id: 'msg-2', threadSequence: 6 };
+      const mockCreated = { id: 'msg-2', threadSequence: 6, createdAt: new Date('2026-01-01T00:00:00Z') };
       prisma.message.create.mockResolvedValue(mockCreated);
 
       const dto = {
@@ -178,6 +184,8 @@ describe('GroupsService', () => {
         senderUserId: 'user-1',
         senderDeviceId: 'dev-1',
         ciphertext: 'cipher',
+        threadSequence: 6,
+        createdAt: mockCreated.createdAt.toISOString(),
       });
     });
   });

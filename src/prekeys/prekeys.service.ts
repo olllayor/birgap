@@ -1,14 +1,28 @@
-import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
 import { RefillPrekeysDto } from './dto/refill-prekeys.dto';
 import { RotateSignedPrekeyDto } from './dto/rotate-signed-prekey.dto';
 
 @Injectable()
 export class PreKeysService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly config: ConfigService,
+  ) {}
 
   async refill(userId: string, deviceId: string, dto: RefillPrekeysDto) {
     await this.assertDeviceOwner(userId, deviceId);
+
+    const maxTotal = this.config.get<number>('PREKEY_MAX_TOTAL') ?? 500;
+    const current = await this.prisma.oneTimePrekey.count({
+      where: { deviceId, consumedAt: null },
+    });
+    if (current + dto.prekeys.length > maxTotal) {
+      throw new BadRequestException(
+        `Prekey refill would exceed device limit. Current: ${current}, adding: ${dto.prekeys.length}, max: ${maxTotal}`,
+      );
+    }
 
     const result = await this.prisma.oneTimePrekey.createMany({
       data: dto.prekeys.map((prekey) => ({

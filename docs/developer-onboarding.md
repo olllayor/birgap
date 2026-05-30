@@ -28,7 +28,7 @@ Edit `.env` with your configuration. For local development, the defaults work:
 ```env
 NODE_ENV=development
 PORT=3000
-DATABASE_URL=postgresql://postgres:postgres@localhost:5432/birgap?schema=public
+DATABASE_URL=postgresql://postgres:postgres@localhost:5432/birgap?schema=public&connection_limit=10
 REDIS_URL=redis://localhost:6379
 JWT_ACCESS_SECRET=your-super-secret-key-at-least-24-chars
 JWT_ACCESS_TTL=15m

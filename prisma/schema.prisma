@@ -228,6 +228,7 @@ model Otp {
   createdAt DateTime  @default(now())
 
   @@index([phoneHash, status, expiresAt])
+  @@index([phoneHash, status, createdAt])
 }
 
 model SmsReport {

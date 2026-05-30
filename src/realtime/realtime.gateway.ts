@@ -90,13 +90,18 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
       return;
     }
     if (body.groupId) {
-      const members = await this.prisma.groupMember.findMany({
-        where: { groupId: body.groupId },
-        select: { userId: true },
-      });
-      for (const member of members) {
-        if (member.userId !== client.data.userId) {
-          this.server.to(`user:${member.userId}`).emit('typing.start', {
+      let memberIds = await this.redis.getGroupMemberIds(body.groupId);
+      if (!memberIds) {
+        const members = await this.prisma.groupMember.findMany({
+          where: { groupId: body.groupId },
+          select: { userId: true },
+        });
+        memberIds = members.map((m) => m.userId);
+        this.redis.setGroupMemberIds(body.groupId, memberIds).catch(() => {});
+      }
+      for (const userId of memberIds) {
+        if (userId !== client.data.userId) {
+          this.server.to(`user:${userId}`).emit('typing.start', {
             userId: client.data.userId,
             deviceId: client.data.deviceId,
             groupId: body.groupId,
@@ -117,13 +122,18 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
       return;
     }
     if (body.groupId) {
-      const members = await this.prisma.groupMember.findMany({
-        where: { groupId: body.groupId },
-        select: { userId: true },
-      });
-      for (const member of members) {
-        if (member.userId !== client.data.userId) {
-          this.server.to(`user:${member.userId}`).emit('typing.stop', {
+      let memberIds = await this.redis.getGroupMemberIds(body.groupId);
+      if (!memberIds) {
+        const members = await this.prisma.groupMember.findMany({
+          where: { groupId: body.groupId },
+          select: { userId: true },
+        });
+        memberIds = members.map((m) => m.userId);
+        this.redis.setGroupMemberIds(body.groupId, memberIds).catch(() => {});
+      }
+      for (const userId of memberIds) {
+        if (userId !== client.data.userId) {
+          this.server.to(`user:${userId}`).emit('typing.stop', {
             userId: client.data.userId,
             deviceId: client.data.deviceId,
             groupId: body.groupId,
@@ -139,11 +149,11 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
   }
 
   @OnEvent('message.created')
-  async onMessageCreated(message: { envelopes: Array<{ recipientDeviceId: string; recipientUserId: string }> }) {
+  onMessageCreated(message: { envelopes: Array<{ recipientDeviceId: string; recipientUserId: string }> }) {
     for (const envelope of message.envelopes) {
       this.server.to(`device:${envelope.recipientDeviceId}`).emit('message.new', envelope);
     }
-    await this.push.sendMessageWakeup(message.envelopes);
+    this.push.sendMessageWakeup(message.envelopes).catch(() => {});
   }
 
   @OnEvent('message.ack')

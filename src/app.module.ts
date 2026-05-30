@@ -25,6 +25,7 @@ import { UsersModule } from './users/users.module';
 import { GroupsModule } from './groups/groups.module';
 import { DirectThreadsModule } from './direct-threads/direct-threads.module';
 import { GqlThrottlerGuard } from './common/guards/gql-throttler.guard';
+import { MetricsModule } from './metrics/metrics.module';
 import { PruneService } from './common/tasks/prune.service';
 
 @Module({
@@ -81,6 +82,7 @@ import { PruneService } from './common/tasks/prune.service';
     }),
     PrismaModule,
     RedisModule,
+    MetricsModule,
     AuthModule,
     UsersModule,
     DevicesModule,

@@ -12,15 +12,9 @@ describe('OtpService', () => {
   let smsService: any;
 
   let mockActiveOtp: any = null;
-  let mockFailedOtp: any = null;
 
   const mockOtpModel = {
-    findFirst: jest.fn().mockImplementation((args) => {
-      if (args?.where?.attempts) {
-        return mockFailedOtp;
-      }
-      return mockActiveOtp;
-    }),
+    findFirst: jest.fn().mockImplementation(() => mockActiveOtp),
     create: jest.fn(),
     update: jest.fn(),
   };
@@ -31,7 +25,6 @@ describe('OtpService', () => {
 
   beforeEach(async () => {
     mockActiveOtp = null;
-    mockFailedOtp = null;
     mockOtpModel.findFirst.mockClear();
     mockOtpModel.create.mockClear();
     mockOtpModel.update.mockClear();
@@ -199,9 +192,9 @@ describe('OtpService', () => {
         status: OtpStatus.UNUSED,
         attempts: 5,
         expiresAt: new Date(Date.now() + 300000),
-        createdAt: new Date(),
+        createdAt: new Date(Date.now() - 1000), // 1 second ago, within lockout window
       };
-      mockFailedOtp = failedOtp;
+      mockActiveOtp = failedOtp;
 
       await expect(service.verifyOtp('+998901234567', '123456')).rejects.toThrow(
         ForbiddenException,
@@ -217,7 +210,7 @@ describe('OtpService', () => {
         status: OtpStatus.UNUSED,
         attempts: 5,
         expiresAt: new Date(Date.now() + 300000),
-        createdAt: new Date(),
+        createdAt: new Date(Date.now() - 1000), // within lockout window
       };
       mockActiveOtp = otpWithMaxAttempts;
 

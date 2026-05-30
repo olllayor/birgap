@@ -5,8 +5,8 @@ describe('UsersService', () => {
   it('returns signed prekey with null one-time prekey when OTPKs are exhausted', async () => {
     const tx = {
       oneTimePrekey: {
-        findFirst: jest.fn().mockResolvedValue(null),
-        update: jest.fn(),
+        findMany: jest.fn().mockResolvedValue([]),
+        updateMany: jest.fn(),
       },
     };
     const prisma = {
@@ -43,6 +43,7 @@ describe('UsersService', () => {
         },
       ],
     });
+    expect(tx.oneTimePrekey.updateMany).not.toHaveBeenCalled();
   });
 
   it('throws when recipient has no active devices', async () => {
@@ -79,6 +80,12 @@ describe('UsersService', () => {
           profileKeyHash: true,
         },
       });
+    });
+
+    it('throws BadRequestException when batch exceeds 1000 phone hashes', async () => {
+      const service = new UsersService({} as any);
+      const phoneHashes = Array.from({ length: 1001 }, (_, i) => `hash-${i}`);
+      await expect(service.syncContacts(phoneHashes)).rejects.toThrow(BadRequestException);
     });
   });
 

@@ -9,7 +9,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { OtpStatus } from '@prisma/client';
 import { SmsService, SMS_SERVICE_TOKEN } from '../sms/sms.module';
 import { Inject } from '@nestjs/common';
-import { sha256, normalizePhone } from '../common/utils/crypto.util';
+import { sha256, normalizePhone, randomDigits } from '../common/utils/crypto.util';
 import { timingSafeEqual } from 'crypto';
 
 @Injectable()
@@ -84,31 +84,10 @@ export class OtpService {
     const maxAttempts = this.config.get<number>('OTP_MAX_ATTEMPTS') ?? 5;
     const lockoutSeconds = this.config.get<number>('OTP_LOCKOUT_SECONDS') ?? 900;
 
-    const recentFailed = await this.prisma.otp.findFirst({
-      where: {
-        phoneHash,
-        status: OtpStatus.UNUSED,
-        attempts: { gte: maxAttempts },
-        createdAt: {
-          gt: new Date(Date.now() - lockoutSeconds * 1000),
-        },
-      },
-      orderBy: { createdAt: 'desc' },
-    });
-
-    if (recentFailed) {
-      throw new ForbiddenException(
-        'Too many failed attempts. Please try again later.',
-      );
-    }
-
     const otp = await this.prisma.otp.findFirst({
       where: {
         phoneHash,
         status: OtpStatus.UNUSED,
-        expiresAt: {
-          gt: new Date(),
-        },
       },
       orderBy: { createdAt: 'desc' },
     });
@@ -117,10 +96,15 @@ export class OtpService {
       throw new NotFoundException('Invalid or expired OTP');
     }
 
-    if (otp.attempts >= maxAttempts) {
+    const lockoutThreshold = new Date(Date.now() - lockoutSeconds * 1000);
+    if (otp.attempts >= maxAttempts && otp.createdAt > lockoutThreshold) {
       throw new ForbiddenException(
         'Too many failed attempts. Please try again later.',
       );
+    }
+
+    if (otp.expiresAt <= new Date()) {
+      throw new NotFoundException('Invalid or expired OTP');
     }
 
     const expectedCode = otp.code.padStart(6, '0');
@@ -156,7 +140,7 @@ export class OtpService {
     if (mockCode) {
       return mockCode;
     }
-    return String(Math.floor(100000 + Math.random() * 900000));
+    return randomDigits(6);
   }
 
   private timingSafeCompare(a: string, b: string): boolean {

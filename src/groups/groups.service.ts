@@ -2,6 +2,7 @@ import { Injectable, ForbiddenException, NotFoundException, BadRequestException 
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { PrismaService } from '../prisma/prisma.service';
+import { RedisService } from '../redis/redis.service';
 import { CreateGroupDto } from './dto/create-group.dto';
 import { SendGroupMessageDto } from './dto/send-group-message.dto';
 
@@ -9,14 +10,15 @@ import { SendGroupMessageDto } from './dto/send-group-message.dto';
 export class GroupsService {
   constructor(
     private readonly prisma: PrismaService,
+    private readonly redis: RedisService,
     @InjectQueue('group-fanout') private readonly fanoutQueue: Queue,
   ) {}
 
   async createGroup(creatorUserId: string, dto: CreateGroupDto) {
     const memberIds = Array.from(new Set([creatorUserId, ...dto.members]));
 
-    return this.prisma.$transaction(async (tx) => {
-      const group = await tx.group.create({
+    const group = await this.prisma.$transaction(async (tx) => {
+      const created = await tx.group.create({
         data: {
           encryptedMetadata: dto.encryptedMetadata as any,
           members: {
@@ -30,8 +32,11 @@ export class GroupsService {
           members: true,
         },
       });
-      return group;
+      return created;
     });
+
+    this.redis.setGroupMemberIds(group.id, memberIds).catch(() => {});
+    return group;
   }
 
   async addMembers(userId: string, groupId: string, memberIds: string[]) {
@@ -52,13 +57,16 @@ export class GroupsService {
       return { count: 0 };
     }
 
-    return this.prisma.groupMember.createMany({
+    const result = await this.prisma.groupMember.createMany({
       data: newMemberIds.map((id) => ({
         groupId,
         userId: id,
         role: 'MEMBER',
       })),
     });
+
+    this.redis.invalidateGroupMemberIds(groupId).catch(() => {});
+    return result;
   }
 
   async removeMember(userId: string, groupId: string, targetUserId: string) {
@@ -82,9 +90,12 @@ export class GroupsService {
       throw new NotFoundException('Target user is not a member of this group');
     }
 
-    return this.prisma.groupMember.delete({
+    const result = await this.prisma.groupMember.delete({
       where: { groupId_userId: { groupId, userId: targetUserId } },
     });
+
+    this.redis.invalidateGroupMemberIds(groupId).catch(() => {});
+    return result;
   }
 
   async queueGroupMessage(senderUserId: string, groupId: string, dto: SendGroupMessageDto) {
@@ -145,6 +156,8 @@ export class GroupsService {
       senderUserId,
       senderDeviceId: dto.senderDeviceId,
       ciphertext: dto.ciphertext,
+      threadSequence: result.threadSequence,
+      createdAt: result.createdAt.toISOString(),
     });
 
     return { success: true, messageId: result.id, queued: true };
@@ -155,7 +168,6 @@ export class GroupsService {
       where: { id },
       include: {
         members: true,
-        messages: { orderBy: { threadSequence: 'asc' } },
       },
     });
     if (!group) {
@@ -169,7 +181,6 @@ export class GroupsService {
       where: { members: { some: { userId } } },
       include: {
         members: true,
-        messages: { orderBy: { threadSequence: 'asc' } },
       },
       orderBy: { updatedAt: 'desc' },
     });
