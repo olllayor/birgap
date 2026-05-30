@@ -18,7 +18,14 @@ io(API_URL, {
 
 ## Client Events
 
+### Direct Typing
+
 - `typing.start`: `{ "recipientUserId": "uuid" }`
 - `typing.stop`: `{ "recipientUserId": "uuid" }`
 
-Typing events are ephemeral, not stored, and expire client-side after 3 seconds.
+### Group Typing
+
+- `typing.start`: `{ "groupId": "uuid" }`
+- `typing.stop`: `{ "groupId": "uuid" }`
+
+Typing events are ephemeral, not stored, and expire client-side after 3 seconds. Group member lists are cached in Redis (5-minute TTL) to avoid repeated database queries on high-frequency typing events.

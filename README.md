@@ -46,16 +46,16 @@ In scope:
 - Up to 3 active devices per user
 - Per-device signed prekeys and one-time prekeys
 - 1:1 encrypted message envelope relay
+- Group encrypted message relay with fanout
 - Idempotent message sending
-- Server-assigned direct-thread sequence numbers
+- Server-assigned direct-thread and group sequence numbers
 - WebSocket ticket auth
-- Typing/presence events
+- Typing/presence events (direct and group)
 - Opaque encrypted backup blob storage
 
 Out of scope:
 
 - Plaintext messaging
-- Groups
 - Channels
 - Calls
 - Media

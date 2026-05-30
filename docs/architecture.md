@@ -118,7 +118,7 @@ Client                          Server
   │                               │
 ```
 
-### Message Send Flow
+### Direct Message Send Flow
 
 ```
 Sender Client                    Server                     Recipient Client
@@ -129,7 +129,7 @@ Sender Client                    Server                     Recipient Client
      ├─ POST /messages ────────────►│                              │
      │  { envelopes: [...] }        │                              │
      │                              ├─ emit message.new ──────────►│
-     │                              ├─ push notification ─────────►│
+     │                              ├─ push notification (async) ─►│
      │                              │                              │
      │◄─ 200 OK ────────────────────┤                              │
      │  { id, threadSequence }      │                              │
@@ -137,6 +137,26 @@ Sender Client                    Server                     Recipient Client
      │                              │◄─ POST /messages/:id/ack ────┤
      │                              │   { status: "DELIVERED" }    │
      │◄─ emit message.ack ──────────┤                              │
+     │                              │                              │
+```
+
+### Group Message Send Flow
+
+```
+Sender Client                    Server                     Recipient Clients
+     │                              │                              │
+     ├─ POST /groups/:id/messages ─►│                              │
+     │  { ciphertext }              │                              │
+     │                              ├─ Queue job (group-fanout)   │
+     │◄─ 200 OK ────────────────────┤                              │
+     │  { queued: true }              │                              │
+     │                              │                              │
+     │                         Processor (async)                   │
+     │                              │                              │
+     │                              ├─ Single query: active devices│
+     │                              ├─ Batch insert envelopes      │
+     │                              ├─ emit message.new ─────────►│
+     │                              ├─ push notification (async) ──►│
      │                              │                              │
 ```
 
@@ -233,8 +253,10 @@ MessageEnvelope (N) ──── (1) Device (recipient)
 
 ### Redis
 - Device-to-socket mapping for real-time routing
+- Group member list cache for typing indicators (TTL 5 min)
 - Ephemeral state for active connections
 - Ping/pong health monitoring
+- Connection resilience with exponential backoff retry strategy
 
 ### Cloudflare R2 (S3-Compatible)
 - Encrypted backup blob storage
@@ -276,8 +298,10 @@ Internal events via `@nestjs/event-emitter`:
 
 | Event | Payload | Emitted By | Handled By |
 |-------|---------|------------|------------|
-| `message.created` | Serialized message | MessagesService | RealtimeGateway |
+| `message.created` | Serialized message | MessagesService, GroupFanoutProcessor | RealtimeGateway |
 | `message.ack` | ACK payload | MessagesService | RealtimeGateway |
+
+**Push Notification Decoupling**: `RealtimeGateway.onMessageCreated` emits Socket.IO events immediately and fires push notification wakeups asynchronously. Push delivery (FCM) does not block realtime delivery.
 
 External WebSocket events:
 

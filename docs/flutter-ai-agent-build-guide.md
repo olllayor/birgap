@@ -464,16 +464,18 @@ Response 200: { "status": "ok", "info": { "postgres": { "status": "up" }, "redis
 |-------|---------|--------|
 | `message.new` | Envelope object | Decrypt, store locally, ACK DELIVERED |
 | `message.ack` | `{ messageId, deviceId, userId, status, threadId, threadSequence, senderUserId, senderDeviceId }` | Update UI delivery status |
-| `typing.start` | `{ userId, deviceId }` | Show typing indicator (auto-expire after 3s) |
-| `typing.stop` | `{ userId, deviceId }` | Hide typing indicator |
+| `typing.start` | `{ userId, deviceId, groupId? }` | Show typing indicator (auto-expire after 3s) |
+| `typing.stop` | `{ userId, deviceId, groupId? }` | Hide typing indicator |
 | `presence.active` | `{ userId, deviceId }` | Show user as online |
 
 ### Client → Server
 
 | Event | Payload | When |
 |-------|---------|------|
-| `typing.start` | `{ "recipientUserId": "uuid" }` | User starts typing in text field |
-| `typing.stop` | `{ "recipientUserId": "uuid" }` | User stops typing / sends message |
+| `typing.start` | `{ "recipientUserId": "uuid" }` | User starts typing in 1:1 chat |
+| `typing.stop` | `{ "recipientUserId": "uuid" }` | User stops typing / sends message in 1:1 |
+| `typing.start` | `{ "groupId": "uuid" }` | User starts typing in group chat |
+| `typing.stop` | `{ "groupId": "uuid" }` | User stops typing / sends message in group |
 
 ---
 
@@ -761,12 +763,20 @@ class WebSocketManager {
     await _syncPendingMessages();
   }
 
-  void sendTypingStart(String recipientUserId) {
-    _socket?.emit('typing.start', {'recipientUserId': recipientUserId});
+  void sendTypingStart({String? recipientUserId, String? groupId}) {
+    if (groupId != null) {
+      _socket?.emit('typing.start', {'groupId': groupId});
+    } else if (recipientUserId != null) {
+      _socket?.emit('typing.start', {'recipientUserId': recipientUserId});
+    }
   }
 
-  void sendTypingStop(String recipientUserId) {
-    _socket?.emit('typing.stop', {'recipientUserId': recipientUserId});
+  void sendTypingStop({String? recipientUserId, String? groupId}) {
+    if (groupId != null) {
+      _socket?.emit('typing.stop', {'groupId': groupId});
+    } else if (recipientUserId != null) {
+      _socket?.emit('typing.stop', {'recipientUserId': recipientUserId});
+    }
   }
 }
 ```

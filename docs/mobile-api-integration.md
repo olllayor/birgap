@@ -541,7 +541,7 @@ Sent to the sender’s user room when a recipient device ACKs.
 }
 ```
 
-#### `typing.start`
+#### `typing.start` (Direct)
 
 ```json
 {
@@ -550,12 +550,32 @@ Sent to the sender’s user room when a recipient device ACKs.
 }
 ```
 
-#### `typing.stop`
+#### `typing.stop` (Direct)
 
 ```json
 {
   "userId": "typing-user-uuid",
   "deviceId": "typing-device-uuid"
+}
+```
+
+#### `typing.start` (Group)
+
+```json
+{
+  "userId": "typing-user-uuid",
+  "deviceId": "typing-device-uuid",
+  "groupId": "group-uuid"
+}
+```
+
+#### `typing.stop` (Group)
+
+```json
+{
+  "userId": "typing-user-uuid",
+  "deviceId": "typing-device-uuid",
+  "groupId": "group-uuid"
 }
 ```
 
@@ -570,7 +590,7 @@ Sent to the sender’s user room when a recipient device ACKs.
 
 ### Client Events
 
-#### `typing.start`
+#### `typing.start` (Direct)
 
 ```json
 {
@@ -578,11 +598,27 @@ Sent to the sender’s user room when a recipient device ACKs.
 }
 ```
 
-#### `typing.stop`
+#### `typing.stop` (Direct)
 
 ```json
 {
   "recipientUserId": "other-user-uuid"
+}
+```
+
+#### `typing.start` (Group)
+
+```json
+{
+  "groupId": "group-uuid"
+}
+```
+
+#### `typing.stop` (Group)
+
+```json
+{
+  "groupId": "group-uuid"
 }
 ```
 

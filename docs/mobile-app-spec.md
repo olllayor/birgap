@@ -585,12 +585,20 @@ class SocketManager {
     _socket!.on('presence.active', (data) => _presenceController.add(data));
   }
 
-  void sendTypingStart(String recipientUserId) {
-    _socket?.emit('typing.start', {'recipientUserId': recipientUserId});
+  void sendTypingStart(String? recipientUserId, {String? groupId}) {
+    if (groupId != null) {
+      _socket?.emit('typing.start', {'groupId': groupId});
+    } else if (recipientUserId != null) {
+      _socket?.emit('typing.start', {'recipientUserId': recipientUserId});
+    }
   }
 
-  void sendTypingStop(String recipientUserId) {
-    _socket?.emit('typing.stop', {'recipientUserId': recipientUserId});
+  void sendTypingStop(String? recipientUserId, {String? groupId}) {
+    if (groupId != null) {
+      _socket?.emit('typing.stop', {'groupId': groupId});
+    } else if (recipientUserId != null) {
+      _socket?.emit('typing.stop', {'recipientUserId': recipientUserId});
+    }
   }
 
   void disconnect() {

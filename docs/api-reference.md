@@ -880,13 +880,15 @@ See [WebSocket Events Contract](./websocket-events.md) for complete event docume
 |-------|---------|-------------|
 | `message.new` | Envelope object | New encrypted envelope |
 | `message.ack` | ACK payload | Delivery/read status update |
-| `typing.start` | `{ userId, deviceId }` | User started typing |
-| `typing.stop` | `{ userId, deviceId }` | User stopped typing |
+| `typing.start` | `{ userId, deviceId, groupId? }` | User started typing |
+| `typing.stop` | `{ userId, deviceId, groupId? }` | User stopped typing |
 | `presence.active` | `{ userId, deviceId }` | User/device came online |
 
 ### Client → Server Events
 
 | Event | Payload | Description |
 |-------|---------|-------------|
-| `typing.start` | `{ recipientUserId }` | Start typing indicator |
-| `typing.stop` | `{ recipientUserId }` | Stop typing indicator |
+| `typing.start` | `{ recipientUserId }` | Start typing in 1:1 chat |
+| `typing.stop` | `{ recipientUserId }` | Stop typing in 1:1 chat |
+| `typing.start` | `{ groupId }` | Start typing in group chat |
+| `typing.stop` | `{ groupId }` | Stop typing in group chat |
