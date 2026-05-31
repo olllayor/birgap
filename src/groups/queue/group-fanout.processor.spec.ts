@@ -2,6 +2,7 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
 import { Job } from 'bullmq';
 import { PrismaService } from '../../prisma/prisma.service';
 import { QueueMetrics } from '../../metrics/queue.metrics';
+import { UnreadService } from '../../unread/unread.service';
 import { GroupFanoutJobData, GroupFanoutProcessor } from './group-fanout.processor';
 
 describe('GroupFanoutProcessor', () => {
@@ -11,6 +12,10 @@ describe('GroupFanoutProcessor', () => {
     recordCompleted: jest.fn(),
     recordFailed: jest.fn(),
   } as unknown as QueueMetrics;
+
+  const mockUnreadService = {
+    enqueueRecalc: jest.fn().mockResolvedValue(undefined),
+  } as unknown as UnreadService;
 
   beforeEach(() => {
     const prisma = {
@@ -26,7 +31,7 @@ describe('GroupFanoutProcessor', () => {
       emit: jest.fn(),
     } as unknown as EventEmitter2;
 
-    processor = new GroupFanoutProcessor(prisma, events, mockQueueMetrics);
+    processor = new GroupFanoutProcessor(prisma, events, mockQueueMetrics, mockUnreadService);
   });
 
   it('fans out message to active devices excluding sender device and emits message.created event', async () => {
@@ -51,7 +56,7 @@ describe('GroupFanoutProcessor', () => {
       emit: jest.fn(),
     } as unknown as EventEmitter2;
 
-    const testProcessor = new GroupFanoutProcessor(prisma, events, mockQueueMetrics);
+    const testProcessor = new GroupFanoutProcessor(prisma, events, mockQueueMetrics, mockUnreadService);
 
     const job = {
       data: {

@@ -5,6 +5,7 @@ import { Job } from 'bullmq';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { QueueMetrics } from '../../metrics/queue.metrics';
+import { UnreadService } from '../../unread/unread.service';
 
 export interface GroupFanoutJobData {
   messageId: string;
@@ -24,6 +25,7 @@ export class GroupFanoutProcessor extends WorkerHost {
     private readonly prisma: PrismaService,
     private readonly events: EventEmitter2,
     private readonly queueMetrics: QueueMetrics,
+    private readonly unreadService: UnreadService,
   ) {
     super();
   }
@@ -93,6 +95,21 @@ export class GroupFanoutProcessor extends WorkerHost {
 
     // 5. Emit event to trigger realtime Socket.IO broadcasts and push notification wakeups
     this.events.emit('message.created', messageEventPayload);
+
+    // 6. Enqueue unread counter recalc for each unique recipient (excluding sender)
+    const recipientUserIds = [
+      ...new Set(targetDevices.map((d) => d.userId).filter((uid) => uid !== senderUserId)),
+    ];
+    await Promise.all(
+      recipientUserIds.map((uid) =>
+        this.unreadService.enqueueRecalc({
+          userId: uid,
+          threadId: groupId,
+          threadType: 'group',
+          reason: 'new_message',
+        }),
+      ),
+    );
 
     return { fannedOutTo: targetDevices.length };
   }

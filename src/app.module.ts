@@ -31,6 +31,8 @@ import { MetricsModule } from './metrics/metrics.module';
 import { QueuesModule } from './queues/queues.module';
 import { PruneService } from './common/tasks/prune.service';
 import { PruneProcessor } from './common/tasks/prune.processor';
+import { UnreadModule } from './unread/unread.module';
+import { ReactionsModule } from './reactions/reactions.module';
 
 @Module({
   imports: [
@@ -115,6 +117,8 @@ import { PruneProcessor } from './common/tasks/prune.processor';
     DirectThreadsModule,
     HealthModule,
     QueuesModule,
+    UnreadModule,
+    ReactionsModule,
   ],
   providers: [
     PruneService,

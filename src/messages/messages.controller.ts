@@ -4,6 +4,7 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { AuthenticatedUser } from '../common/types/authenticated-user';
 import { AckMessageDto } from './dto/ack-message.dto';
+import { MarkAllReadDto } from './dto/mark-all-read.dto';
 import { PendingQueryDto } from './dto/pending-query.dto';
 import { SendMessageDto } from './dto/send-message.dto';
 import { MessagesService } from './messages.service';
@@ -23,6 +24,16 @@ export class MessagesController {
   @Get('pending')
   getPending(@CurrentUser() user: AuthenticatedUser, @Query() query: PendingQueryDto) {
     return this.messagesService.getPending(user.userId, query.deviceId, query.after, query.limit);
+  }
+
+  @Get('unread-counts')
+  getUnreadCounts(@CurrentUser() user: AuthenticatedUser) {
+    return this.messagesService.getUnreadCounts(user.userId);
+  }
+
+  @Post('mark-all-read')
+  markAllRead(@CurrentUser() user: AuthenticatedUser, @Body() dto: MarkAllReadDto) {
+    return this.messagesService.markAllRead(user.userId, dto);
   }
 
   @Post(':messageId/ack')

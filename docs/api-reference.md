@@ -640,6 +640,108 @@ POST /messages/:messageId/ack
 
 ---
 
+## Reactions
+
+### Toggle Reaction
+
+Add or toggle a reaction on a message. Tapping the same emoji again removes it; tapping a different emoji replaces the previous reaction.
+
+```
+POST /messages/:messageId/reactions
+```
+
+**Authentication**: Required (JWT)
+
+**Request Body**:
+```json
+{
+  "emoji": "👍"
+}
+```
+
+**Response** (200 OK):
+```json
+{
+  "action": "added",
+  "emoji": "👍"
+}
+```
+
+**Toggle-off Response** (200 OK):
+```json
+{
+  "action": "removed",
+  "emoji": "👍"
+}
+```
+
+**Allowed Emojis**: `👍`, `👎`, `❤️`, `🔥`, `😂`, `😮`, `😢`, `🎉`, `🙏`, `💯`, `👏`, `🤔`, `😍`, `🥳`, `😎`, `💪`, `✨`, `🚀`, `👀`, `💀`
+
+**Notes**:
+- One reaction per user per message
+- Same emoji toggles off (removes)
+- Different emoji replaces previous reaction
+- Validates user is a participant (thread member or group member)
+- Emits `reaction.new` or `reaction.removed` WebSocket event to other participants
+
+**Errors**:
+- 403: Not a participant in the conversation
+- 404: Message not found
+
+---
+
+### Remove Reaction
+
+Remove your reaction from a message (regardless of which emoji).
+
+```
+DELETE /messages/:messageId/reactions
+```
+
+**Authentication**: Required (JWT)
+
+**Response** (200 OK):
+```json
+{
+  "removed": true
+}
+```
+
+**No-op Response** (200 OK):
+```json
+{
+  "removed": false
+}
+```
+
+---
+
+### Get Reaction Counts
+
+Get aggregated reaction counts for a message.
+
+```
+GET /messages/:messageId/reactions
+```
+
+**Authentication**: Required (JWT)
+
+**Response** (200 OK):
+```json
+[
+  { "emoji": "👍", "count": 3, "reacted": true },
+  { "emoji": "❤️", "count": 1, "reacted": false }
+]
+```
+
+**Notes**:
+- Returns aggregated counts grouped by emoji
+- `reacted` indicates whether the current user used that emoji
+- Results cached in Redis (5-minute TTL)
+- Validates user is a participant
+
+---
+
 ## Realtime
 
 ### Create WebSocket Ticket
@@ -883,6 +985,8 @@ See [WebSocket Events Contract](./websocket-events.md) for complete event docume
 | `typing.start` | `{ userId, deviceId, groupId? }` | User started typing |
 | `typing.stop` | `{ userId, deviceId, groupId? }` | User stopped typing |
 | `presence.active` | `{ userId, deviceId }` | User/device came online |
+| `reaction.new` | `{ reactionId, messageId, userId, emoji, createdAt, threadId, groupId }` | Reaction added |
+| `reaction.removed` | `{ reactionId, messageId, userId, emoji, threadId, groupId }` | Reaction removed |
 
 ### Client → Server Events
 

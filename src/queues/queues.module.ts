@@ -30,6 +30,14 @@ import { QueuesController } from './queues.controller';
       name: 'storage-cleanup',
       adapter: BullMQAdapter,
     }),
+    BullBoardModule.forFeature({
+      name: 'unread-recalc',
+      adapter: BullMQAdapter,
+    }),
+    BullBoardModule.forFeature({
+      name: 'reaction-fanout',
+      adapter: BullMQAdapter,
+    }),
   ],
   controllers: [QueuesController],
 })

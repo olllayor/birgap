@@ -7,7 +7,9 @@ import {
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { UnreadService } from '../unread/unread.service';
 import { AckMessageDto } from './dto/ack-message.dto';
+import { MarkAllReadDto } from './dto/mark-all-read.dto';
 import { SendMessageDto } from './dto/send-message.dto';
 import { canonicalDirectPair } from './thread.util';
 
@@ -16,6 +18,7 @@ export class MessagesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly events: EventEmitter2,
+    private readonly unreadService: UnreadService,
   ) {}
 
   async send(senderUserId: string, dto: SendMessageDto) {
@@ -115,6 +118,23 @@ export class MessagesService {
       });
 
       this.events.emit('message.created', this.serializeMessage(created));
+
+      if (created.threadId) {
+        this.unreadService
+          .enqueueRecalc({
+            userId: dto.recipientUserId,
+            threadId: created.threadId,
+            threadType: 'direct',
+            reason: 'new_message',
+          })
+          .catch((error) => {
+            this.events.emit('error', {
+              message: 'Failed to enqueue unread recalc',
+              error: error instanceof Error ? error.message : String(error),
+            });
+          });
+      }
+
       return this.serializeMessage(created);
     } catch (error) {
       if (this.isUniqueConstraint(error)) {
@@ -179,14 +199,24 @@ export class MessagesService {
     }
 
     const now = new Date();
-    const data =
-      dto.status === 'READ'
-        ? { status: 'READ' as const, deliveredAt: envelope.deliveredAt ?? now, readAt: now }
-        : { status: 'DELIVERED' as const, deliveredAt: envelope.deliveredAt ?? now };
+
+    if (dto.status === 'READ') {
+      await this.prisma.messageEnvelope.updateMany({
+        where: {
+          messageId,
+          recipientUserId: userId,
+          status: { not: 'READ' },
+        },
+        data: { status: 'READ', readAt: now, deliveredAt: envelope.deliveredAt ?? now },
+      });
+    }
 
     const updated = await this.prisma.messageEnvelope.update({
       where: { messageId_recipientDeviceId: { messageId, recipientDeviceId: dto.deviceId } },
-      data,
+      data:
+        dto.status === 'READ'
+          ? { status: 'READ' as const, deliveredAt: envelope.deliveredAt ?? now, readAt: now }
+          : { status: 'DELIVERED' as const, deliveredAt: envelope.deliveredAt ?? now },
       include: {
         message: {
           select: {
@@ -212,7 +242,46 @@ export class MessagesService {
       senderDeviceId: updated.message.senderDeviceId,
     });
 
+    if (dto.status === 'READ') {
+      const threadId = updated.message.threadId ?? updated.message.groupId;
+      const threadType = updated.message.threadId ? 'direct' : 'group';
+
+      if (threadId) {
+        this.unreadService
+          .enqueueRecalc({
+            userId,
+            threadId,
+            threadType,
+            reason: 'ack_read',
+          })
+          .catch((error) => {
+            this.events.emit('error', {
+              message: 'Failed to enqueue unread recalc',
+              error: error instanceof Error ? error.message : String(error),
+            });
+          });
+      }
+    }
+
     return updated;
+  }
+
+  async markAllRead(userId: string, dto: MarkAllReadDto) {
+    await this.assertActiveDevice(userId, dto.deviceId);
+
+    await this.unreadService.markAllRead(userId, dto.threadId, dto.threadType);
+
+    this.events.emit('messages.marked_all_read', {
+      userId,
+      threadId: dto.threadId,
+      threadType: dto.threadType,
+    });
+
+    return { success: true };
+  }
+
+  async getUnreadCounts(userId: string) {
+    return this.unreadService.getCounts(userId);
   }
 
   private async assertActiveDevice(userId: string, deviceId: string) {

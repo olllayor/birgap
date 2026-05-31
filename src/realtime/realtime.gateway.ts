@@ -165,6 +165,71 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
     this.server.to(`user:${payload.senderUserId}`).emit('message.ack', payload);
   }
 
+  @OnEvent('unread.updated')
+  onUnreadUpdated(payload: { userId: string; threadId: string; threadType: string; count: number }) {
+    this.server.to(`user:${payload.userId}`).emit('unread.updated', {
+      threadId: payload.threadId,
+      threadType: payload.threadType,
+      count: payload.count,
+    });
+  }
+
+  @OnEvent('messages.marked_all_read')
+  onMarkedAllRead(payload: { userId: string; threadId: string; threadType: string }) {
+    this.server.to(`user:${payload.userId}`).emit('messages.marked_all_read', {
+      threadId: payload.threadId,
+      threadType: payload.threadType,
+    });
+  }
+
+  @OnEvent('reaction.created')
+  onReactionCreated(payload: {
+    reactionId: string;
+    messageId: string;
+    userId: string;
+    emoji: string;
+    createdAt: string;
+    targetUserIds: string[];
+    threadId?: string;
+    groupId?: string;
+  }) {
+    const eventPayload = {
+      reactionId: payload.reactionId,
+      messageId: payload.messageId,
+      userId: payload.userId,
+      emoji: payload.emoji,
+      createdAt: payload.createdAt,
+      threadId: payload.threadId ?? null,
+      groupId: payload.groupId ?? null,
+    };
+    for (const targetUserId of payload.targetUserIds) {
+      this.server.to(`user:${targetUserId}`).emit('reaction.new', eventPayload);
+    }
+  }
+
+  @OnEvent('reaction.removed')
+  onReactionRemoved(payload: {
+    reactionId: string;
+    messageId: string;
+    userId: string;
+    emoji: string;
+    targetUserIds: string[];
+    threadId?: string;
+    groupId?: string;
+  }) {
+    const eventPayload = {
+      reactionId: payload.reactionId,
+      messageId: payload.messageId,
+      userId: payload.userId,
+      emoji: payload.emoji,
+      threadId: payload.threadId ?? null,
+      groupId: payload.groupId ?? null,
+    };
+    for (const targetUserId of payload.targetUserIds) {
+      this.server.to(`user:${targetUserId}`).emit('reaction.removed', eventPayload);
+    }
+  }
+
   async onModuleDestroy() {
     this.isShuttingDown = true;
     this.logger.log('Shutting down WebSocket gateway, notifying connected clients...');
