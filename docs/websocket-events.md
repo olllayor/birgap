@@ -12,6 +12,8 @@ io(API_URL, {
 
 - `message.new`: an encrypted envelope for this device.
 - `message.ack`: delivered/read status changed.
+- `message.deleted`: a message was tombstoned (delete for everyone).
+- `message.edited`: a message was edited (new ciphertext available).
 - `typing.start`: another user started typing.
 - `typing.stop`: another user stopped typing.
 - `presence.active`: another user/device is active.
@@ -62,3 +64,35 @@ Reaction events are delivered to all participants in the conversation (direct th
 ```
 
 Reaction delivery uses Socket.IO user rooms for direct threads (inline emit) and BullMQ queue for groups (async fanout to all group members).
+
+### Delete Events
+
+**`message.deleted` payload**:
+```json
+{
+  "messageId": "uuid",
+  "threadId": "uuid",
+  "groupId": null,
+  "senderUserId": "uuid",
+  "deletedAt": "2026-05-16T10:00:00.000Z",
+  "deletedBy": "SENDER"
+}
+```
+
+Delete events are delivered to all conversation participants except the sender. For direct threads, delivery is inline via Socket.IO user rooms. For groups, delivery is async via the same fanout pattern used for reactions.
+
+### Edit Events
+
+**`message.edited` payload**:
+```json
+{
+  "messageId": "uuid",
+  "threadId": "uuid",
+  "groupId": null,
+  "senderUserId": "uuid",
+  "senderDeviceId": "uuid",
+  "editedAt": "2026-05-16T10:00:00.000Z"
+}
+```
+
+Edit events are delivered to all conversation participants except the sender. For direct threads, delivery is inline via Socket.IO user rooms. For groups, delivery is async via the same fanout pattern used for reactions. Offline clients receive a silent push wakeup to trigger sync.

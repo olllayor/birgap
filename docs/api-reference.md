@@ -640,6 +640,160 @@ POST /messages/:messageId/ack
 
 ---
 
+### Delete Message
+
+Delete a message. Supports two scopes: `FOR_ME` (local hide) and `FOR_EVERYONE` (tombstone).
+
+```
+DELETE /messages/:messageId
+```
+
+**Authentication**: Required (JWT)
+
+**Request Body**:
+```json
+{
+  "deviceId": "current-device-uuid",
+  "scope": "FOR_ME"
+}
+```
+
+**Response** (200 OK):
+```json
+{
+  "success": true,
+  "scope": "FOR_ME"
+}
+```
+
+**Notes**:
+- `FOR_ME`: Creates a `HiddenMessage` record for the current user. No realtime broadcast.
+- `FOR_EVERYONE`: Sets `Message.deletedAt` tombstone. Emits `message.deleted` to all participants.
+- Only the original sender can delete for everyone in direct threads.
+- Group admins can delete any message in a group for everyone.
+- `FOR_EVERYONE` is time-limited to 48 hours by default (configurable via `MESSAGE_EDIT_DELETE_LIMIT_HOURS`).
+- After a tombstone, reactions and replies remain in the database; clients render a "Message deleted" placeholder.
+- Admin deletions are audited in `MessageAdminDeleteLog`.
+
+---
+
+### Edit Message
+
+Edit an existing direct message. Updates `Message.editedAt` and refreshes per-device envelope ciphertext.
+
+```
+PATCH /messages/:messageId
+```
+
+**Authentication**: Required (JWT)
+
+**Request Body**:
+```json
+{
+  "senderDeviceId": "sender-device-uuid",
+  "idempotencyKey": "client-generated-edit-key",
+  "envelopes": [
+    {
+      "recipientDeviceId": "recipient-device-uuid",
+      "ciphertext": {
+        "type": "signal-message",
+        "body": "base64-updated-ciphertext"
+      }
+    }
+  ]
+}
+```
+
+**Response** (200 OK):
+```json
+{
+  "id": "message-uuid",
+  "threadId": "thread-uuid",
+  "senderUserId": "sender-user-uuid",
+  "senderDeviceId": "sender-device-uuid",
+  "threadSequence": 1,
+  "editedAt": "2026-05-16T10:00:00.000Z",
+  "createdAt": "2026-05-16T09:00:00.000Z"
+}
+```
+
+**Notes**:
+- Only the original sender can edit a message.
+- Cannot edit a tombstoned (deleted) message.
+- Edits are time-limited to 48 hours by default.
+- `idempotencyKey` prevents duplicate edit fanouts on retries.
+- Envelope `envelopeVersion` is incremented on each edit; `updatedAt` is refreshed.
+- Emits `message.edited` to all thread participants.
+- Silent push wakeup is sent to offline clients so they can sync the edit.
+
+---
+
+### Sync Updated Messages
+
+Fetch message envelopes that have been edited or deleted since a given timestamp. Used for offline recovery when the client reconnects.
+
+```
+GET /messages/sync?deviceId=uuid&since=2026-05-16T10:00:00.000Z&limit=200
+```
+
+**Authentication**: Required (JWT)
+
+**Query Parameters**:
+| Parameter | Required | Default | Description |
+|-----------|----------|---------|-------------|
+| `deviceId` | Yes | - | Device UUID |
+| `since` | Yes | - | ISO 8601 timestamp |
+| `limit` | No | 200 | Max envelopes (max 500) |
+
+**Response** (200 OK):
+```json
+{
+  "requiresFullReload": false,
+  "envelopes": [
+    {
+      "id": "envelope-uuid",
+      "messageId": "message-uuid",
+      "recipientUserId": "user-uuid",
+      "recipientDeviceId": "device-uuid",
+      "ciphertext": { "type": "signal-message", "body": "base64-ciphertext" },
+      "status": "PENDING",
+      "envelopeVersion": 2,
+      "updatedAt": "2026-05-16T10:00:00.000Z",
+      "isEdit": true,
+      "message": {
+        "id": "message-uuid",
+        "threadId": "thread-uuid",
+        "groupId": null,
+        "senderUserId": "sender-uuid",
+        "senderDeviceId": "sender-device-uuid",
+        "threadSequence": 1,
+        "replyToMessageId": null,
+        "createdAt": "2026-05-16T09:00:00.000Z",
+        "deletedAt": null,
+        "editedAt": "2026-05-16T10:00:00.000Z"
+      }
+    }
+  ],
+  "deletedMessages": [
+    {
+      "messageId": "message-uuid",
+      "threadId": "thread-uuid",
+      "groupId": null,
+      "deletedAt": "2026-05-16T10:00:00.000Z"
+    }
+  ],
+  "hasMore": false
+}
+```
+
+**Notes**:
+- If `since` is older than 14 days, returns `{ "requiresFullReload": true }`. Client should reload threads via GraphQL.
+- `isEdit: true` when `envelopeVersion > 1` or the envelope was updated after the message was edited.
+- `deletedMessages` contains tombstoned messages in threads/groups the user participates in.
+- Call this endpoint after WebSocket reconnect or push wakeup.
+
+---
+
 ## Reactions
 
 ### Toggle Reaction

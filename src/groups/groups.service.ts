@@ -4,15 +4,19 @@ import { Queue } from 'bullmq';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { RedisService } from '../redis/redis.service';
+import { ConfigService } from '@nestjs/config';
 import { CreateGroupDto } from './dto/create-group.dto';
 import { SendGroupMessageDto } from './dto/send-group-message.dto';
+import { EditGroupMessageDto } from './dto/edit-group-message.dto';
 
 @Injectable()
 export class GroupsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly redis: RedisService,
+    private readonly config: ConfigService,
     @InjectQueue('group-fanout') private readonly fanoutQueue: Queue,
+    @InjectQueue('group-edit-fanout') private readonly editFanoutQueue: Queue,
   ) {}
 
   async createGroup(creatorUserId: string, dto: CreateGroupDto) {
@@ -140,6 +144,24 @@ export class GroupsService {
       });
       const nextSequence = (lastMessage?.threadSequence ?? 0) + 1;
 
+      let replyToMessageId: string | null = null;
+      if (dto.replyToMessageId) {
+        const replyTarget = await tx.message.findUnique({
+          where: { id: dto.replyToMessageId },
+          select: { id: true, groupId: true, replyToMessageId: true },
+        });
+        if (!replyTarget) {
+          throw new NotFoundException('Reply target message not found');
+        }
+        if (replyTarget.groupId !== groupId) {
+          throw new BadRequestException('Reply target is not in the same group');
+        }
+        if (replyTarget.replyToMessageId) {
+          throw new BadRequestException('Cannot reply to a message that is itself a reply');
+        }
+        replyToMessageId = replyTarget.id;
+      }
+
       return tx.message.create({
         data: {
           groupId,
@@ -147,6 +169,7 @@ export class GroupsService {
           senderDeviceId: dto.senderDeviceId,
           idempotencyKey: dto.idempotencyKey,
           threadSequence: nextSequence,
+          replyToMessageId,
         },
       });
     });
@@ -158,10 +181,88 @@ export class GroupsService {
       senderDeviceId: dto.senderDeviceId,
       ciphertext: dto.ciphertext,
       threadSequence: result.threadSequence,
+      replyToMessageId: result.replyToMessageId,
       createdAt: result.createdAt.toISOString(),
     });
 
     return { success: true, messageId: result.id, queued: true };
+  }
+
+  async editGroupMessage(senderUserId: string, groupId: string, messageId: string, dto: EditGroupMessageDto) {
+    const member = await this.prisma.groupMember.findUnique({
+      where: { groupId_userId: { groupId, userId: senderUserId } },
+    });
+    if (!member) {
+      throw new ForbiddenException('You are not a member of this group');
+    }
+
+    const message = await this.prisma.message.findUnique({
+      where: { id: messageId },
+      select: { id: true, groupId: true, senderUserId: true, createdAt: true, deletedAt: true },
+    });
+    if (!message) {
+      throw new NotFoundException('Message not found');
+    }
+    if (message.groupId !== groupId) {
+      throw new BadRequestException('Message is not in this group');
+    }
+    if (message.senderUserId !== senderUserId) {
+      throw new ForbiddenException('Only the sender can edit a message');
+    }
+    if (message.deletedAt) {
+      throw new ForbiddenException('Cannot edit a deleted message');
+    }
+
+    const limitEnabled = this.config.get<boolean>('ENABLE_MESSAGE_EDIT_DELETE_LIMIT', true);
+    const limitHours = this.config.get<number>('MESSAGE_EDIT_DELETE_LIMIT_HOURS', 48);
+    if (limitEnabled) {
+      const ageMs = Date.now() - message.createdAt.getTime();
+      const limitMs = limitHours * 60 * 60 * 1000;
+      if (ageMs > limitMs) {
+        throw new ForbiddenException(`Edit is only allowed within ${limitHours} hours`);
+      }
+    }
+
+    // Atomic idempotency: only update if the key is different or null
+    const updateResult = await this.prisma.message.updateMany({
+      where: {
+        id: messageId,
+        lastEditIdempotencyKey: { not: dto.idempotencyKey },
+      },
+      data: {
+        editedAt: new Date(),
+        lastEditIdempotencyKey: dto.idempotencyKey,
+      },
+    });
+
+    if (updateResult.count === 0) {
+      const existing = await this.prisma.message.findUnique({
+        where: { id: messageId },
+        include: { envelopes: true },
+      });
+      if (!existing) {
+        throw new NotFoundException('Message not found');
+      }
+      return { success: true, messageId: existing.id, queued: false };
+    }
+
+    const updated = await this.prisma.message.findUnique({
+      where: { id: messageId },
+    });
+    if (!updated) {
+      throw new NotFoundException('Message not found after edit');
+    }
+
+    await this.editFanoutQueue.add('edit-fanout', {
+      messageId: updated.id,
+      groupId,
+      senderUserId,
+      senderDeviceId: dto.senderDeviceId,
+      ciphertext: dto.ciphertext,
+      editedAt: updated.editedAt!.toISOString(),
+    });
+
+    return { success: true, messageId: updated.id, queued: true };
   }
 
   async findById(id: string) {

@@ -230,6 +230,122 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
     }
   }
 
+  @OnEvent('message.deleted')
+  onMessageDeleted(payload: {
+    messageId: string;
+    threadId: string | null;
+    groupId: string | null;
+    senderUserId: string;
+    deletedAt: string;
+    targetUserIds: string[];
+  }) {
+    const eventPayload = {
+      messageId: payload.messageId,
+      threadId: payload.threadId ?? null,
+      groupId: payload.groupId ?? null,
+      senderUserId: payload.senderUserId,
+      deletedAt: payload.deletedAt,
+    };
+    for (const targetUserId of payload.targetUserIds) {
+      this.server.to(`user:${targetUserId}`).emit('message.deleted', eventPayload);
+    }
+  }
+
+  @OnEvent('message.deleted.group')
+  async onGroupMessageDeleted(payload: {
+    messageId: string;
+    threadId: string | null;
+    groupId: string | null;
+    senderUserId: string;
+    deletedAt: string;
+  }) {
+    if (!payload.groupId) {
+      return;
+    }
+    let memberIds = await this.redis.getGroupMemberIds(payload.groupId);
+    if (!memberIds) {
+      const members = await this.prisma.groupMember.findMany({
+        where: { groupId: payload.groupId },
+        select: { userId: true },
+      });
+      memberIds = members.map((m) => m.userId);
+      this.redis.setGroupMemberIds(payload.groupId, memberIds).catch(() => {});
+    }
+    const eventPayload = {
+      messageId: payload.messageId,
+      threadId: payload.threadId ?? null,
+      groupId: payload.groupId ?? null,
+      senderUserId: payload.senderUserId,
+      deletedAt: payload.deletedAt,
+    };
+    for (const userId of memberIds) {
+      if (userId !== payload.senderUserId) {
+        this.server.to(`user:${userId}`).emit('message.deleted', eventPayload);
+      }
+    }
+  }
+
+  @OnEvent('message.edited')
+  onMessageEdited(payload: {
+    messageId: string;
+    threadId: string | null;
+    groupId: string | null;
+    senderUserId: string;
+    senderDeviceId: string;
+    editedAt: string;
+    targetUserIds: string[];
+    envelopes: unknown[];
+  }) {
+    const eventPayload = {
+      messageId: payload.messageId,
+      threadId: payload.threadId ?? null,
+      groupId: payload.groupId ?? null,
+      senderUserId: payload.senderUserId,
+      senderDeviceId: payload.senderDeviceId,
+      editedAt: payload.editedAt,
+    };
+    for (const targetUserId of payload.targetUserIds) {
+      this.server.to(`user:${targetUserId}`).emit('message.edited', eventPayload);
+    }
+  }
+
+  @OnEvent('message.edited.group')
+  async onGroupMessageEdited(payload: {
+    messageId: string;
+    threadId: string | null;
+    groupId: string | null;
+    senderUserId: string;
+    senderDeviceId: string;
+    editedAt: string;
+    envelopes: unknown[];
+  }) {
+    if (!payload.groupId) {
+      return;
+    }
+    let memberIds = await this.redis.getGroupMemberIds(payload.groupId);
+    if (!memberIds) {
+      const members = await this.prisma.groupMember.findMany({
+        where: { groupId: payload.groupId },
+        select: { userId: true },
+      });
+      memberIds = members.map((m) => m.userId);
+      this.redis.setGroupMemberIds(payload.groupId, memberIds).catch(() => {});
+    }
+    const eventPayload = {
+      messageId: payload.messageId,
+      threadId: payload.threadId ?? null,
+      groupId: payload.groupId ?? null,
+      senderUserId: payload.senderUserId,
+      senderDeviceId: payload.senderDeviceId,
+      editedAt: payload.editedAt,
+    };
+    for (const userId of memberIds) {
+      if (userId !== payload.senderUserId) {
+        this.server.to(`user:${userId}`).emit('message.edited', eventPayload);
+      }
+    }
+  }
+
   async onModuleDestroy() {
     this.isShuttingDown = true;
     this.logger.log('Shutting down WebSocket gateway, notifying connected clients...');

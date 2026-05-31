@@ -16,6 +16,14 @@ export class PushService {
   ) {}
 
   async sendMessageWakeup(envelopes: PushEnvelopeTarget[]) {
-    await this.pushQueue.add('send-wakeup', { envelopes });
+    await this.pushQueue.add('send-wakeup', { type: 'new_message', envelopes });
+  }
+
+  async sendEditWakeup(envelopes: PushEnvelopeTarget[]) {
+    await this.pushQueue.add('send-edit-wakeup', { type: 'edit', envelopes });
+  }
+
+  async sendDeleteWakeup(envelopes: PushEnvelopeTarget[]) {
+    await this.pushQueue.add('send-delete-wakeup', { type: 'delete', envelopes });
   }
 }

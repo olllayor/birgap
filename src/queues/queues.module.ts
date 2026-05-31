@@ -23,6 +23,10 @@ import { QueuesController } from './queues.controller';
       adapter: BullMQAdapter,
     }),
     BullBoardModule.forFeature({
+      name: 'group-edit-fanout',
+      adapter: BullMQAdapter,
+    }),
+    BullBoardModule.forFeature({
       name: 'database-prune',
       adapter: BullMQAdapter,
     }),

@@ -1,8 +1,13 @@
 import { ForbiddenException, NotFoundException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { Queue } from 'bullmq';
 import { PrismaService } from '../prisma/prisma.service';
 import { RedisService } from '../redis/redis.service';
 import { GroupsService } from './groups.service';
+
+const mockConfigService = {
+  get: jest.fn().mockImplementation((key: string, defaultValue: unknown) => defaultValue),
+} as unknown as ConfigService;
 
 describe('GroupsService', () => {
   let service: GroupsService;
@@ -48,11 +53,15 @@ describe('GroupsService', () => {
       invalidateGroupMemberIds: jest.fn().mockResolvedValue(undefined),
     } as unknown as RedisService;
 
-    const queue = {
+    const fanoutQueue = {
       add: jest.fn(),
     } as unknown as Queue;
 
-    service = new GroupsService(prisma, redis, queue);
+    const editFanoutQueue = {
+      add: jest.fn(),
+    } as unknown as Queue;
+
+    service = new GroupsService(prisma, redis, mockConfigService, fanoutQueue, editFanoutQueue);
   });
 
   describe('createGroup', () => {
@@ -75,7 +84,7 @@ describe('GroupsService', () => {
         invalidateGroupMemberIds: jest.fn().mockResolvedValue(undefined),
       } as unknown as RedisService;
       const queue = { add: jest.fn() } as unknown as Queue;
-      const testService = new GroupsService(prisma, redis, queue);
+      const testService = new GroupsService(prisma, redis, mockConfigService, queue, { add: jest.fn() } as unknown as Queue);
 
       const dto = {
         encryptedMetadata: { name: 'Encrypted Group' },
@@ -109,7 +118,7 @@ describe('GroupsService', () => {
           findUnique: jest.fn().mockResolvedValue({ role: 'MEMBER' }),
         },
       } as unknown as PrismaService;
-      const testService = new GroupsService(prisma, {} as unknown as RedisService, {} as unknown as Queue);
+      const testService = new GroupsService(prisma, {} as unknown as RedisService, mockConfigService, {} as unknown as Queue, {} as unknown as Queue);
 
       await expect(
         testService.addMembers('user-2', 'group-1', ['user-4'])
@@ -127,7 +136,7 @@ describe('GroupsService', () => {
       const redis = {
         invalidateGroupMemberIds: jest.fn().mockResolvedValue(undefined),
       } as unknown as RedisService;
-      const testService = new GroupsService(prisma, redis, {} as unknown as Queue);
+      const testService = new GroupsService(prisma, redis, mockConfigService, {} as unknown as Queue, {} as unknown as Queue);
 
       const res = await testService.addMembers('user-1', 'group-1', ['user-2', 'user-3']);
       expect(res).toEqual({ count: 1 });
@@ -154,7 +163,7 @@ describe('GroupsService', () => {
       const redis = {
         invalidateGroupMemberIds: jest.fn().mockResolvedValue(undefined),
       } as unknown as RedisService;
-      const testService = new GroupsService(prisma, redis, {} as unknown as Queue);
+      const testService = new GroupsService(prisma, redis, mockConfigService, {} as unknown as Queue, {} as unknown as Queue);
 
       await expect(testService.removeMember('user-2', 'group-1', 'user-2')).resolves.toBeDefined();
       expect(prisma.groupMember.delete).toHaveBeenCalledWith({
@@ -175,7 +184,7 @@ describe('GroupsService', () => {
       const redis = {
         invalidateGroupMemberIds: jest.fn().mockResolvedValue(undefined),
       } as unknown as RedisService;
-      const testService = new GroupsService(prisma, redis, {} as unknown as Queue);
+      const testService = new GroupsService(prisma, redis, mockConfigService, {} as unknown as Queue, {} as unknown as Queue);
 
       await expect(testService.removeMember('user-1', 'group-1', 'user-2')).resolves.toBeDefined();
     });
@@ -186,7 +195,7 @@ describe('GroupsService', () => {
           findUnique: jest.fn().mockResolvedValueOnce({ userId: 'user-2', role: 'MEMBER' }),
         },
       } as unknown as PrismaService;
-      const testService = new GroupsService(prisma, {} as unknown as RedisService, {} as unknown as Queue);
+      const testService = new GroupsService(prisma, {} as unknown as RedisService, mockConfigService, {} as unknown as Queue, {} as unknown as Queue);
 
       await expect(
         testService.removeMember('user-2', 'group-1', 'user-3')
@@ -201,7 +210,7 @@ describe('GroupsService', () => {
           findUnique: jest.fn().mockResolvedValue(null),
         },
       } as unknown as PrismaService;
-      const testService = new GroupsService(prisma, {} as unknown as RedisService, {} as unknown as Queue);
+      const testService = new GroupsService(prisma, {} as unknown as RedisService, mockConfigService, {} as unknown as Queue, {} as unknown as Queue);
 
       await expect(
         testService.queueGroupMessage('user-1', 'group-1', {
@@ -221,7 +230,7 @@ describe('GroupsService', () => {
           findUnique: jest.fn().mockResolvedValue({ id: 'msg-1' }),
         },
       } as unknown as PrismaService;
-      const testService = new GroupsService(prisma, {} as unknown as RedisService, {} as unknown as Queue);
+      const testService = new GroupsService(prisma, {} as unknown as RedisService, mockConfigService, {} as unknown as Queue, {} as unknown as Queue);
 
       await expect(
         testService.queueGroupMessage('user-1', 'group-1', {
@@ -244,7 +253,7 @@ describe('GroupsService', () => {
         message: {
           findUnique: jest.fn().mockResolvedValue(null),
           findFirst: jest.fn().mockResolvedValue({ threadSequence: 5 }),
-          create: jest.fn().mockResolvedValue({ id: 'msg-2', threadSequence: 6, createdAt: new Date('2026-01-01T00:00:00Z') }),
+          create: jest.fn().mockResolvedValue({ id: 'msg-2', threadSequence: 6, replyToMessageId: null, createdAt: new Date('2026-01-01T00:00:00Z') }),
         },
         $transaction: jest.fn((callback: (tx: Record<string, unknown>) => unknown) =>
           callback(mockPrisma as Record<string, unknown>),
@@ -254,7 +263,7 @@ describe('GroupsService', () => {
       const queue = {
         add: jest.fn(),
       } as unknown as Queue;
-      const testService = new GroupsService(prisma, {} as unknown as RedisService, queue);
+      const testService = new GroupsService(prisma, {} as unknown as RedisService, mockConfigService, queue, { add: jest.fn() } as unknown as Queue);
 
       const dto = {
         senderDeviceId: 'dev-1',
@@ -273,6 +282,7 @@ describe('GroupsService', () => {
           senderDeviceId: 'dev-1',
           idempotencyKey: 'key-12345678',
           threadSequence: 6,
+          replyToMessageId: null,
         },
       });
 
@@ -283,6 +293,7 @@ describe('GroupsService', () => {
         senderDeviceId: 'dev-1',
         ciphertext: 'cipher',
         threadSequence: 6,
+        replyToMessageId: null,
         createdAt: new Date('2026-01-01T00:00:00Z').toISOString(),
       });
     });

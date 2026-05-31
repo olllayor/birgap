@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsDefined, IsString, IsUUID, MaxLength, MinLength } from 'class-validator';
+import { IsDefined, IsOptional, IsString, IsUUID, MaxLength, MinLength } from 'class-validator';
 
 export class SendGroupMessageDto {
   @ApiProperty()
@@ -11,6 +11,11 @@ export class SendGroupMessageDto {
   @MinLength(8)
   @MaxLength(128)
   idempotencyKey!: string;
+
+  @ApiProperty({ required: false, description: 'ID of the message being replied to (must be in the same group).' })
+  @IsOptional()
+  @IsUUID()
+  replyToMessageId?: string;
 
   @ApiProperty({ description: 'Opaque group-key-encrypted payload.' })
   @IsDefined()

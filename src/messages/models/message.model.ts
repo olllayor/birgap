@@ -20,6 +20,18 @@ export class MessageType {
   @Field(() => Int)
   threadSequence!: number;
 
+  @Field(() => ID, { nullable: true })
+  replyToMessageId!: string | null;
+
+  @Field(() => MessageType, { nullable: true })
+  replyTo?: MessageType | null;
+
   @Field()
   createdAt!: Date;
+
+  @Field({ nullable: true })
+  deletedAt?: Date | null;
+
+  @Field({ nullable: true })
+  editedAt?: Date | null;
 }

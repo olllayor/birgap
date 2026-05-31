@@ -52,6 +52,18 @@ export class GroupsResolver {
       },
       orderBy: { threadSequence: 'desc' },
       take,
+      select: {
+        id: true,
+        threadId: true,
+        groupId: true,
+        senderUserId: true,
+        senderDeviceId: true,
+        threadSequence: true,
+        replyToMessageId: true,
+        createdAt: true,
+        deletedAt: true,
+        editedAt: true,
+      },
     });
     return messages.reverse();
   }

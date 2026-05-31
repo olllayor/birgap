@@ -1,12 +1,15 @@
-import { Body, Controller, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { AuthenticatedUser } from '../common/types/authenticated-user';
 import { AckMessageDto } from './dto/ack-message.dto';
+import { DeleteMessageDto } from './dto/delete-message.dto';
+import { EditMessageDto } from './dto/edit-message.dto';
 import { MarkAllReadDto } from './dto/mark-all-read.dto';
 import { PendingQueryDto } from './dto/pending-query.dto';
 import { SendMessageDto } from './dto/send-message.dto';
+import { SyncQueryDto } from './dto/sync-query.dto';
 import { MessagesService } from './messages.service';
 
 @ApiTags('messages')
@@ -43,5 +46,31 @@ export class MessagesController {
     @Body() dto: AckMessageDto,
   ) {
     return this.messagesService.ack(user.userId, messageId, dto);
+  }
+
+  @Delete(':messageId')
+  delete(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('messageId') messageId: string,
+    @Body() dto: DeleteMessageDto,
+  ) {
+    return this.messagesService.delete(user.userId, messageId, dto);
+  }
+
+  @Patch(':messageId')
+  edit(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('messageId') messageId: string,
+    @Body() dto: EditMessageDto,
+  ) {
+    return this.messagesService.edit(user.userId, messageId, dto);
+  }
+
+  @Get('sync')
+  sync(
+    @CurrentUser() user: AuthenticatedUser,
+    @Query() query: SyncQueryDto,
+  ) {
+    return this.messagesService.sync(user.userId, query.deviceId, query.since, query.limit);
   }
 }

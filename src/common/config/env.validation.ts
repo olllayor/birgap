@@ -32,4 +32,6 @@ export const envValidationSchema = Joi.object({
   APNS_TEAM_ID: Joi.string().allow('').optional(),
   HMS_APP_ID: Joi.string().allow('').optional(),
   INTERNAL_API_KEY: Joi.string().min(32).required(),
+  MESSAGE_EDIT_DELETE_LIMIT_HOURS: Joi.number().default(48),
+  ENABLE_MESSAGE_EDIT_DELETE_LIMIT: Joi.boolean().default(true),
 });

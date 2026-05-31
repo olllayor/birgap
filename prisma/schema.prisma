@@ -137,15 +137,18 @@ model DirectThread {
 }
 
 model Message {
-  id               String   @id @default(uuid()) @db.Uuid
-  threadId         String?  @db.Uuid
-  groupId          String?  @db.Uuid
-  senderUserId     String   @db.Uuid
-  senderDeviceId   String   @db.Uuid
-  idempotencyKey   String
-  threadSequence   Int
-  replyToMessageId String?  @db.Uuid
-  createdAt        DateTime @default(now())
+  id                   String    @id @default(uuid()) @db.Uuid
+  threadId             String?   @db.Uuid
+  groupId              String?   @db.Uuid
+  senderUserId         String    @db.Uuid
+  senderDeviceId       String    @db.Uuid
+  idempotencyKey       String
+  threadSequence       Int
+  replyToMessageId     String?   @db.Uuid
+  createdAt            DateTime  @default(now())
+  deletedAt            DateTime?
+  editedAt             DateTime?
+  lastEditIdempotencyKey String?
 
   thread       DirectThread?    @relation(fields: [threadId], references: [id], onDelete: Cascade)
   group        Group?           @relation(fields: [groupId], references: [id], onDelete: Cascade)
@@ -155,6 +158,7 @@ model Message {
   replies      Message[]        @relation("MessageReplies")
   envelopes    MessageEnvelope[]
   reactions    MessageReaction[]
+  adminDeletes MessageAdminDeleteLog[]
 
   @@unique([senderDeviceId, idempotencyKey])
   @@unique([threadId, threadSequence])
@@ -174,13 +178,16 @@ model MessageEnvelope {
   deliveredAt       DateTime?
   readAt            DateTime?
   envelopeSequence  BigInt         @default(autoincrement())
+  envelopeVersion   Int            @default(1)
   createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
 
   message         Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
   recipientDevice Device  @relation("RecipientDeviceEnvelopes", fields: [recipientDeviceId], references: [id], onDelete: Restrict)
 
   @@unique([messageId, recipientDeviceId])
   @@index([recipientDeviceId, status, envelopeSequence])
+  @@index([recipientDeviceId, updatedAt])
   @@index([recipientUserId, status])
 }
 
@@ -281,6 +288,26 @@ model UnreadCounter {
 
   @@id([userId, threadType, threadId])
   @@index([userId])
+}
+
+model HiddenMessage {
+  userId    String   @db.Uuid
+  messageId String   @db.Uuid
+  createdAt DateTime @default(now())
+
+  @@id([userId, messageId])
+}
+
+model MessageAdminDeleteLog {
+  id          String   @id @default(uuid()) @db.Uuid
+  messageId   String   @db.Uuid
+  adminUserId String   @db.Uuid
+  deletedAt   DateTime @default(now())
+
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@index([messageId])
+  @@index([adminUserId])
 }
 
 model MessageReaction {

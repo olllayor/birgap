@@ -4,6 +4,7 @@ import {
   ArrayMinSize,
   IsArray,
   IsDefined,
+  IsOptional,
   IsString,
   IsUUID,
   MaxLength,
@@ -35,6 +36,11 @@ export class SendMessageDto {
   @MinLength(8)
   @MaxLength(128)
   idempotencyKey!: string;
+
+  @ApiProperty({ required: false, description: 'ID of the message being replied to (must be in the same thread).' })
+  @IsOptional()
+  @IsUUID()
+  replyToMessageId?: string;
 
   @ApiProperty({ type: [MessageEnvelopeDto] })
   @IsArray()
