@@ -81,6 +81,24 @@ export class OtpService {
     const phoneHash = sha256(normalizedPhone);
     const maxAttempts = this.config.get<number>('OTP_MAX_ATTEMPTS') ?? 5;
     const lockoutSeconds = this.config.get<number>('OTP_LOCKOUT_SECONDS') ?? 900;
+    const lockoutThreshold = new Date(Date.now() - lockoutSeconds * 1000);
+
+    // Phone-wide lockout: aggregate failed attempts across every OTP for this
+    // phone within the lockout window so users can't reset their attempt
+    // counter by requesting a fresh OTP after exhausting the previous one.
+    const recentAttempts = await this.prisma.otp.aggregate({
+      where: {
+        phoneHash,
+        createdAt: { gt: lockoutThreshold },
+      },
+      _sum: { attempts: true },
+    });
+    const totalAttempts = recentAttempts._sum.attempts ?? 0;
+    if (totalAttempts >= maxAttempts) {
+      throw new ForbiddenException(
+        'Too many failed attempts. Please try again later.',
+      );
+    }
 
     const otp = await this.prisma.otp.findFirst({
       where: {
@@ -92,13 +110,6 @@ export class OtpService {
 
     if (!otp) {
       throw new NotFoundException('Invalid or expired OTP');
-    }
-
-    const lockoutThreshold = new Date(Date.now() - lockoutSeconds * 1000);
-    if (otp.attempts >= maxAttempts && otp.createdAt > lockoutThreshold) {
-      throw new ForbiddenException(
-        'Too many failed attempts. Please try again later.',
-      );
     }
 
     if (otp.expiresAt <= new Date()) {
@@ -116,7 +127,7 @@ export class OtpService {
         data: { attempts: newAttempts },
       });
 
-      if (newAttempts >= maxAttempts) {
+      if (totalAttempts + 1 >= maxAttempts) {
         throw new ForbiddenException(
           'Too many failed attempts. Please try again later.',
         );

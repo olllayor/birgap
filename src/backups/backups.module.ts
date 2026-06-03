@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { BullModule } from '@nestjs/bullmq';
 import { AuthModule } from '../auth/auth.module';
+import { MetricsModule } from '../metrics/metrics.module';
 import { BackupsController } from './backups.controller';
 import { BackupsService } from './backups.service';
 import { StorageCleanupProcessor } from './queue/storage-cleanup.processor';
@@ -8,6 +9,7 @@ import { StorageCleanupProcessor } from './queue/storage-cleanup.processor';
 @Module({
   imports: [
     AuthModule,
+    MetricsModule,
     BullModule.registerQueue({
       name: 'storage-cleanup',
       defaultJobOptions: {

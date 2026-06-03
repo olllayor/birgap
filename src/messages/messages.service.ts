@@ -592,6 +592,7 @@ export class MessagesService {
       senderUserId: updated.senderUserId,
       deletedAt: updated.deletedAt!.toISOString(),
       deletedBy,
+      deletedByUserId: userId,
     };
 
     if (updated.groupId) {

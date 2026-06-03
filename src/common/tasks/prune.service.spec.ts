@@ -23,13 +23,13 @@ describe('PruneService', () => {
   });
 
   describe('triggerPrune', () => {
-    it('should add a prune job to the queue', async () => {
+    it('should add a prune job to the queue with a per-run unique jobId', async () => {
       await service.triggerPrune();
 
       expect(mockPruneQueue.add).toHaveBeenCalledWith(
         'prune',
         { triggeredAt: expect.any(String) },
-        { jobId: 'database-prune-singleton' },
+        { jobId: expect.stringMatching(/^database-prune-\d{4}-\d{2}-\d{2}T/) },
       );
     });
 

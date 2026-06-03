@@ -41,30 +41,60 @@ export class MediaCleanupProcessor extends WorkerHost {
     }
 
     let deletedObjects = 0;
+    const reclaimableIds: string[] = [];
     for (const m of stale) {
-      await this.r2.deleteObject(m.bucketKey).catch((error) => {
-        this.logger.warn(
-          `Failed to delete R2 object ${m.bucketKey}: ${(error as Error).message}`,
-        );
-      });
-      deletedObjects++;
-      if (m.thumbnailBucketKey) {
-        await this.r2.deleteObject(m.thumbnailBucketKey).catch((error) => {
-          this.logger.warn(
-            `Failed to delete R2 thumbnail ${m.thumbnailBucketKey}: ${(error as Error).message}`,
-          );
-        });
+      const mainOk = await this.tryDeleteR2Object(m.bucketKey);
+      let thumbOk = true;
+      if (mainOk) {
         deletedObjects++;
+      }
+      if (m.thumbnailBucketKey) {
+        thumbOk = await this.tryDeleteR2Object(m.thumbnailBucketKey);
+        if (thumbOk) {
+          deletedObjects++;
+        }
+      }
+      if (mainOk && thumbOk) {
+        reclaimableIds.push(m.id);
       }
     }
 
-    const result = await this.prisma.messageMedia.deleteMany({
-      where: { id: { in: stale.map((m) => m.id) } },
-    });
+    const orphaned = stale.length - reclaimableIds.length;
+    if (orphaned > 0) {
+      this.logger.warn(
+        `Retaining ${orphaned} media row(s) because R2 deletion failed; will retry on next run`,
+      );
+    }
+
+    let removedRows = 0;
+    if (reclaimableIds.length > 0) {
+      const result = await this.prisma.messageMedia.deleteMany({
+        where: { id: { in: reclaimableIds } },
+      });
+      removedRows = result.count;
+    }
 
     this.logger.log(
-      `Media cleanup completed: removed ${result.count} stale media rows and ${deletedObjects} R2 objects.`,
+      `Media cleanup completed: removed ${removedRows} stale media rows and ${deletedObjects} R2 objects.`,
     );
+  }
+
+  private async tryDeleteR2Object(bucketKey: string): Promise<boolean> {
+    try {
+      await this.r2.deleteObject(bucketKey);
+      return true;
+    } catch (error) {
+      const name = error instanceof Error ? error.name : '';
+      const statusCode = (error as { $metadata?: { httpStatusCode?: number } })?.$metadata
+        ?.httpStatusCode;
+      if (name === 'NoSuchKey' || statusCode === 404) {
+        return true;
+      }
+      this.logger.warn(
+        `Failed to delete R2 object ${bucketKey}: ${(error as Error).message}`,
+      );
+      return false;
+    }
   }
 
   @OnWorkerEvent('completed')

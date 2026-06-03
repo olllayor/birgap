@@ -258,6 +258,7 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
     groupId: string | null;
     senderUserId: string;
     deletedAt: string;
+    deletedByUserId?: string;
   }) {
     if (!payload.groupId) {
       return;
@@ -278,8 +279,9 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
       senderUserId: payload.senderUserId,
       deletedAt: payload.deletedAt,
     };
+    const actorUserId = payload.deletedByUserId ?? payload.senderUserId;
     for (const userId of memberIds) {
-      if (userId !== payload.senderUserId) {
+      if (userId !== actorUserId) {
         this.server.to(`user:${userId}`).emit('message.deleted', eventPayload);
       }
     }

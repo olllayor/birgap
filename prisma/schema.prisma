@@ -178,8 +178,6 @@ model Message {
   @@unique([senderDeviceId, idempotencyKey])
   @@unique([threadId, threadSequence])
   @@unique([groupId, threadSequence])
-  @@index([threadId, threadSequence])
-  @@index([groupId, threadSequence])
   @@index([replyToMessageId])
 }
 

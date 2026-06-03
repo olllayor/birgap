@@ -18,10 +18,11 @@ export class MediaCleanupService {
   @Cron('0 4 * * *')
   async triggerMediaCleanup() {
     this.logger.log('Triggering media orphan cleanup job...');
+    const triggeredAt = new Date().toISOString();
     await this.mediaCleanupQueue.add(
       'cleanup',
-      { triggeredAt: new Date().toISOString() },
-      { jobId: 'media-cleanup-singleton' },
+      { triggeredAt },
+      { jobId: `media-cleanup-${triggeredAt}` },
     );
   }
 }

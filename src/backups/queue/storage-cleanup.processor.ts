@@ -40,8 +40,10 @@ export class StorageCleanupProcessor extends WorkerHost {
   }
 
   @OnWorkerEvent('failed')
-  onFailed(job: Job<StorageCleanupJobData>, error: Error) {
+  onFailed(job: Job<StorageCleanupJobData> | undefined, error: Error) {
     this.queueMetrics.recordFailed('storage-cleanup');
-    this.logger.error(`Cleanup job ${job.id} failed for ${job.data.bucketKey}: ${error.message}`);
+    const jobId = job?.id ?? 'unknown';
+    const bucketKey = job?.data?.bucketKey ?? 'unknown';
+    this.logger.error(`Cleanup job ${jobId} failed for ${bucketKey}: ${error.message}`);
   }
 }

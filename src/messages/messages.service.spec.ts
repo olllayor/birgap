@@ -4,6 +4,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { UnreadService } from '../unread/unread.service';
 import { MessagesService } from './messages.service';
 import { MediaService } from './media.service';
+import { DeleteMessageScope } from './dto/delete-message.dto';
 
 const mockUnreadService = {
   enqueueRecalc: jest.fn().mockResolvedValue(undefined),
@@ -378,6 +379,66 @@ describe('MessagesService', () => {
 
       expect(prisma.messageEnvelope.findMany).toHaveBeenCalledWith(
         expect.objectContaining({ take: 501 }),
+      );
+    });
+  });
+
+  describe('delete (FOR_EVERYONE)', () => {
+    const buildAdminDeletePrisma = () => {
+      const message = {
+        id: 'message-1',
+        threadId: null,
+        groupId: 'group-1',
+        senderUserId: 'author-user',
+        createdAt: new Date(),
+        deletedAt: null,
+        thread: null,
+      };
+      const tombstoned = {
+        ...message,
+        deletedAt: new Date('2026-05-16T10:00:00.000Z'),
+        thread: null,
+        envelopes: [],
+      };
+      const tx = {
+        message: { update: jest.fn().mockResolvedValue(tombstoned) },
+        messageAdminDeleteLog: { create: jest.fn().mockResolvedValue({}) },
+      };
+      const prisma = {
+        device: { findFirst: jest.fn().mockResolvedValue({ id: 'admin-device', userId: 'admin-user', active: true }) },
+        message: { findUnique: jest.fn().mockResolvedValue(message) },
+        groupMember: { findUnique: jest.fn().mockResolvedValue({ role: 'ADMIN' }) },
+        $transaction: jest.fn((callback: (tx: unknown) => unknown) => callback(tx)),
+      };
+      return { prisma, tx, message, tombstoned };
+    };
+
+    it('emits message.deleted.group with deletedByUserId set to the admin actor, not the message author', async () => {
+      const { prisma } = buildAdminDeletePrisma();
+      const events = { emit: jest.fn() } as unknown as EventEmitter2;
+      const service = new MessagesService(
+        prisma as unknown as PrismaService,
+        events,
+        mockUnreadService,
+        mockConfigService,
+        mockPushService,
+        mockMediaService,
+      );
+
+      await service.delete('admin-user', 'message-1', {
+        deviceId: 'admin-device',
+        scope: DeleteMessageScope.FOR_EVERYONE,
+      });
+
+      expect(events.emit).toHaveBeenCalledWith(
+        'message.deleted.group',
+        expect.objectContaining({
+          messageId: 'message-1',
+          groupId: 'group-1',
+          senderUserId: 'author-user',
+          deletedBy: 'ADMIN',
+          deletedByUserId: 'admin-user',
+        }),
       );
     });
   });

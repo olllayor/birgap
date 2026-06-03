@@ -16,10 +16,11 @@ export class PruneService {
   @Cron('0 3 * * *')
   async triggerPrune() {
     this.logger.log('Triggering database prune job...');
+    const triggeredAt = new Date().toISOString();
     await this.pruneQueue.add(
       'prune',
-      { triggeredAt: new Date().toISOString() },
-      { jobId: 'database-prune-singleton' },
+      { triggeredAt },
+      { jobId: `database-prune-${triggeredAt}` },
     );
   }
 }

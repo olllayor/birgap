@@ -323,12 +323,20 @@ DATABASE_URL=postgresql://user:pass@pooler:6543/birgap?schema=public&pgbouncer=t
 
 **Sizing formula:**
 ```
-Prisma connection_limit per instance × number of app instances ≤ pooler DEFAULT_POOL_SIZE ≤ PostgreSQL max_connections × 0.8
+PgBouncer DEFAULT_POOL_SIZE ≤ PostgreSQL max_connections × 0.8
+Prisma connection_limit × number of app instances ≤ PgBouncer MAX_CLIENT_CONN
 ```
 
+The whole point of a transaction-mode pooler is that `DEFAULT_POOL_SIZE` (real
+PG connections) can be much smaller than the sum of Prisma client connections,
+because short-lived transactions multiplex over the pool. `MAX_CLIENT_CONN`
+caps how many client-side sockets PgBouncer accepts and must be ≥ total Prisma
+connections, while `DEFAULT_POOL_SIZE` is sized to PostgreSQL's headroom.
+
 Example for 4 instances:
-- Prisma `connection_limit=10` per instance → 40 total outbound connections
-- PgBouncer `DEFAULT_POOL_SIZE=20` → 20 actual PG connections
+- Prisma `connection_limit=10` per instance → 40 total client sockets
+- PgBouncer `MAX_CLIENT_CONN=100` → comfortably above 40
+- PgBouncer `DEFAULT_POOL_SIZE=20` → 20 real PG connections multiplexed
 - PostgreSQL `max_connections=100` → plenty of headroom
 
 ## Monitoring
