@@ -4,10 +4,14 @@ import { NestFactory } from '@nestjs/core';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { NextFunction, Request, Response } from 'express';
-import { timingSafeEqual } from 'crypto';
 import helmet from 'helmet';
 import { AppModule } from './app.module';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
+import {
+  INTERNAL_API_KEY_HEADER,
+  INTERNAL_API_KEY_MESSAGES,
+  validateInternalApiKey,
+} from './common/guards/internal-api-key.validator';
 
 async function bootstrap() {
   const logger = new Logger('Bootstrap');
@@ -34,21 +38,18 @@ async function bootstrap() {
 
   // Bull-board mounts its own Express handler at /queues outside of Nest's
   // controller pipeline, so @UseGuards on QueuesController never fires.
-  // Protect the route here with the same internal API key contract.
+  // Reuse the shared validator so policy can't drift between guard and edge.
   const internalApiKey = config.getOrThrow<string>('INTERNAL_API_KEY');
-  const expectedKeyBuf = Buffer.from(internalApiKey);
   app.use('/queues', (req: Request, res: Response, next: NextFunction) => {
-    const header = req.headers['x-internal-api-key'];
-    if (typeof header !== 'string' || header.length === 0) {
-      res.status(403).json({ statusCode: 403, message: 'Missing internal API key' });
-      return;
-    }
-    const headerBuf = Buffer.from(header);
-    if (
-      headerBuf.length !== expectedKeyBuf.length ||
-      !timingSafeEqual(headerBuf, expectedKeyBuf)
-    ) {
-      res.status(403).json({ statusCode: 403, message: 'Invalid internal API key' });
+    const result = validateInternalApiKey(
+      req.headers[INTERNAL_API_KEY_HEADER],
+      internalApiKey,
+    );
+    if (!result.ok) {
+      res.status(403).json({
+        statusCode: 403,
+        message: INTERNAL_API_KEY_MESSAGES[result.reason],
+      });
       return;
     }
     next();
