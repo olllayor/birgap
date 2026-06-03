@@ -15,6 +15,7 @@ import { DeleteMessageDto, DeleteMessageScope } from './dto/delete-message.dto';
 import { EditMessageDto } from './dto/edit-message.dto';
 import { MarkAllReadDto } from './dto/mark-all-read.dto';
 import { SendMessageDto } from './dto/send-message.dto';
+import { MediaService } from './media.service';
 import { canonicalDirectPair } from './thread.util';
 
 @Injectable()
@@ -25,6 +26,7 @@ export class MessagesService {
     private readonly unreadService: UnreadService,
     private readonly config: ConfigService,
     private readonly push: PushService,
+    private readonly mediaService: MediaService,
   ) {}
 
   async send(senderUserId: string, dto: SendMessageDto) {
@@ -35,7 +37,7 @@ export class MessagesService {
           idempotencyKey: dto.idempotencyKey,
         },
       },
-      include: { envelopes: true },
+      include: { envelopes: true, media: { orderBy: { createdAt: 'asc' } } },
     });
 
     if (existing) {
@@ -117,6 +119,10 @@ export class MessagesService {
           replyToMessageId = replyTarget.id;
         }
 
+        if (dto.mediaIds?.length) {
+          await this.mediaService.assertAttachmentsOwned(senderUserId, dto.mediaIds, tx);
+        }
+
         const message = await tx.message.create({
           data: {
             threadId: thread.id,
@@ -136,8 +142,15 @@ export class MessagesService {
               }),
             },
           },
-          include: { envelopes: true },
+          include: { envelopes: true, media: { orderBy: { createdAt: 'asc' } } },
         });
+
+        if (dto.mediaIds?.length) {
+          await tx.messageMedia.updateMany({
+            where: { id: { in: dto.mediaIds }, userId: senderUserId, messageId: null },
+            data: { messageId: message.id },
+          });
+        }
 
         return message;
       });
@@ -170,7 +183,7 @@ export class MessagesService {
               idempotencyKey: dto.idempotencyKey,
             },
           },
-          include: { envelopes: true },
+          include: { envelopes: true, media: { orderBy: { createdAt: 'asc' } } },
         });
         if (duplicate) {
           return this.serializeMessage(duplicate);
@@ -605,6 +618,14 @@ export class MessagesService {
         });
       });
 
+    // Enqueue R2 cleanup for any media attached to this message
+    this.mediaService.cleanupMessageMedia(messageId).catch((error) => {
+      this.events.emit('error', {
+        message: 'Failed to enqueue media cleanup',
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+
     return { success: true, scope: DeleteMessageScope.FOR_EVERYONE, deletedBy };
   }
 
@@ -663,6 +684,7 @@ export class MessagesService {
     replyToMessageId?: string | null;
     createdAt: Date;
     envelopes: unknown[];
+    media?: unknown[];
   }) {
     return {
       id: message.id,
@@ -674,6 +696,7 @@ export class MessagesService {
       replyToMessageId: message.replyToMessageId ?? null,
       createdAt: message.createdAt,
       envelopes: message.envelopes,
+      media: message.media ?? [],
     };
   }
 

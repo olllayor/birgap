@@ -156,9 +156,13 @@ Allowed platforms:
 
 Allowed push platforms:
 
-- `FCM`
-- `APNS`
-- `HMS`
+- `FCM` (the only currently-shipping value)
+
+The enum also accepts `APNS` and `HMS` for forward compatibility, but the backend will not deliver push to devices registered with those values. Always register with `pushPlatform: 'FCM'`.
+
+**iOS path.** iOS clients must use Firebase Cloud Messaging (`firebase_messaging` on iOS), not raw APNS. `firebase_messaging` returns an FCM token, and the FCM project transparently bridges it to APNS as long as the iOS app's APNS Authentication Key is configured in the Firebase console. Register that token with `pushPlatform: 'FCM'`.
+
+**Android path.** `firebase_messaging` returns a native FCM token. Register it with `pushPlatform: 'FCM'`.
 
 If the user already has 3 active devices, registration returns `409 Conflict`. The app should show a device-management flow and call `DELETE /devices/:deviceId` for an old device before retrying.
 
@@ -297,6 +301,7 @@ Mobile responsibilities:
 - Create sender-sync envelopes for the sender’s other active devices if the app wants multi-device sync.
 - Generate a required `idempotencyKey` for every outgoing logical message.
 - Treat `ciphertext` as app-defined encrypted JSON. The backend does not inspect it.
+- For media attachments, run the **3-step media flow** (init → PUT to R2 → complete) before sending the message.
 
 ### Send Message
 
@@ -309,6 +314,8 @@ Protected endpoint.
   "senderDeviceId": "sender-device-uuid",
   "recipientUserId": "recipient-user-uuid",
   "idempotencyKey": "client-generated-unique-key",
+  "replyToMessageId": "message-uuid (optional)",
+  "mediaIds": ["media-uuid-1", "media-uuid-2"],
   "envelopes": [
     {
       "recipientDeviceId": "recipient-device-uuid",
@@ -332,6 +339,7 @@ Rules:
 - The request must include envelopes for every active recipient device.
 - Envelopes may also include the sender’s other active devices for sender-sync.
 - Envelopes for unrelated devices are rejected.
+- `mediaIds` is optional. Max attachments per message is `MEDIA_MAX_ATTACHMENTS_PER_MESSAGE` (default 10). Each `mediaId` must have been created by the current user via `POST /messages/media/init`, must be in `COMPLETE` status, and must not yet be bound to a message.
 
 Response:
 
@@ -342,7 +350,22 @@ Response:
   "senderUserId": "sender-user-uuid",
   "senderDeviceId": "sender-device-uuid",
   "threadSequence": 1,
+  "replyToMessageId": null,
   "createdAt": "2026-05-10T12:00:00.000Z",
+  "media": [
+    {
+      "id": "media-uuid-1",
+      "messageId": "message-uuid",
+      "mediaType": "IMAGE",
+      "mimeType": "image/jpeg",
+      "sizeBytes": 245678,
+      "filename": "photo.jpg",
+      "mediaCiphertextHash": "sha256...",
+      "uploadStatus": "COMPLETE",
+      "uploadedAt": "2026-05-16T09:59:55.000Z",
+      "createdAt": "2026-05-16T09:59:50.000Z"
+    }
+  ],
   "envelopes": [
     {
       "id": "envelope-uuid",
@@ -363,6 +386,78 @@ Response:
 ```
 
 Use `threadSequence` for final message ordering inside a direct chat. The client can show temporary local ordering while sending, then reconcile when the server response arrives.
+
+### Media Attachments
+
+Attachments are uploaded to Cloudflare R2 in 3 steps. The server only sees opaque ciphertext + hashes; it never decrypts. Max 10 attachments per message, max 100 MB per file.
+
+**Step 1: Init** — claim a slot and get a presigned R2 PUT URL.
+
+`POST /messages/media/init`
+
+```json
+{
+  "mediaType": "IMAGE",
+  "filename": "photo.jpg",
+  "mimeType": "image/jpeg",
+  "sizeBytes": 245678,
+  "mediaCiphertextHash": "sha256-of-encrypted-blob",
+  "width": 1920,
+  "height": 1080
+}
+```
+
+Returns:
+```json
+{
+  "mediaId": "media-uuid",
+  "uploadUrl": "https://r2.example.com/bucket/media/...?X-Amz-Signature=...",
+  "bucketKey": "media/{userId}/{uuid}.jpg"
+}
+```
+
+**Step 2: Upload** — `PUT` the encrypted blob to `uploadUrl` with `Content-Length` = `sizeBytes` and `Content-Type` = `mimeType`.
+
+**Step 3: Complete** — verify the PUT succeeded and flip the row to `COMPLETE`.
+
+`POST /messages/media/:mediaId/complete`
+
+```json
+{ "sizeBytes": 245678 }
+```
+
+Returns the finalized media row.
+
+**Attachment** — pass the `mediaId` list in the next `POST /messages` (or `POST /groups/:id/envelopes`).
+
+```json
+{ "senderDeviceId": "...", "recipientUserId": "...", "idempotencyKey": "...", "mediaIds": ["media-uuid-1", "media-uuid-2"], "envelopes": [...] }
+```
+
+**Download** — when the user taps an attachment, fetch a short-lived presigned GET URL:
+
+`GET /messages/media/:mediaId/download-url`
+
+```json
+{ "downloadUrl": "https://r2.example.com/...", "expiresIn": 300 }
+```
+
+**Allowed mime types per `mediaType`**:
+| `mediaType` | Allowed `mimeType` |
+|---|---|
+| `IMAGE` | `image/jpeg`, `image/png`, `image/webp`, `image/gif` |
+| `VIDEO` | `video/mp4`, `video/quicktime` |
+| `AUDIO` | `audio/mpeg`, `audio/ogg`, `audio/aac`, `audio/mp4` |
+| `DOCUMENT` | `application/pdf`, `text/plain` |
+
+**Errors**:
+- 400: `sizeBytes` exceeds 100 MB
+- 400: `mimeType` not allowed for the declared `mediaType`
+- 400: `mediaId` invalid, already attached, or not yet `COMPLETE`
+- 403: Caller is not the owner of the media
+- 403: Caller cannot access the parent message (download only)
+
+**Stale uploads**: A `media-cleanup` BullMQ job runs daily and deletes R2 objects + DB rows for any media that stayed in `PENDING` for longer than `MEDIA_PENDING_TIMEOUT_HOURS` (default 24).
 
 ### Fetch Pending Messages
 

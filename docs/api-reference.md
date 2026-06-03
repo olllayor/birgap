@@ -461,6 +461,8 @@ POST /messages
   "senderDeviceId": "sender-device-uuid",
   "recipientUserId": "recipient-user-uuid",
   "idempotencyKey": "client-generated-unique-key",
+  "replyToMessageId": "message-uuid (optional)",
+  "mediaIds": ["media-uuid-1", "media-uuid-2"],
   "envelopes": [
     {
       "recipientDeviceId": "recipient-device-uuid",
@@ -491,7 +493,22 @@ POST /messages
   "senderUserId": "sender-user-uuid",
   "senderDeviceId": "sender-device-uuid",
   "threadSequence": 1,
+  "replyToMessageId": null,
   "createdAt": "2026-05-16T10:00:00.000Z",
+  "media": [
+    {
+      "id": "media-uuid-1",
+      "messageId": "message-uuid",
+      "mediaType": "IMAGE",
+      "mimeType": "image/jpeg",
+      "sizeBytes": 245678,
+      "filename": "photo.jpg",
+      "mediaCiphertextHash": "sha256...",
+      "uploadStatus": "COMPLETE",
+      "uploadedAt": "2026-05-16T09:59:55.000Z",
+      "createdAt": "2026-05-16T09:59:50.000Z"
+    }
+  ],
   "envelopes": [
     {
       "id": "envelope-uuid",
@@ -519,12 +536,133 @@ POST /messages
 - Envelopes for unrelated devices are rejected
 - Retrying with same idempotency key returns original message
 - Server assigns `threadSequence` for ordering
+- `mediaIds` is optional (max 10 attachments per message, default `MEDIA_MAX_ATTACHMENTS_PER_MESSAGE=10`)
+- Each `mediaId` must be owned by the sender, in `COMPLETE` status, and not yet bound to a message
 
 **Errors**:
 - 400: Missing envelope for recipient device
 - 400: Envelope device not part of conversation
+- 400: Too many attachments (exceeds `MEDIA_MAX_ATTACHMENTS_PER_MESSAGE`)
+- 400: One or more mediaIds are invalid, already attached, or not yet fully uploaded
 - 403: Sender device not active for user
 - 404: Recipient has no active devices
+
+---
+
+## Media Attachments
+
+The media flow has 3 steps per attachment: `init` → upload to R2 → `complete`. Attachments are bound to a message at `POST /messages` time (or `POST /groups/:id/envelopes`).
+
+### Init Media Upload
+
+Create a pending `MessageMedia` row and get a presigned R2 upload URL for the encrypted blob.
+
+```
+POST /messages/media/init
+```
+
+**Authentication**: Required (JWT)
+
+**Request Body**:
+```json
+{
+  "mediaType": "IMAGE",
+  "filename": "photo.jpg",
+  "mimeType": "image/jpeg",
+  "sizeBytes": 245678,
+  "mediaCiphertextHash": "sha256-of-encrypted-blob",
+  "width": 1920,
+  "height": 1080
+}
+```
+
+**Field constraints**:
+- `mediaType`: one of `IMAGE`, `VIDEO`, `AUDIO`, `DOCUMENT`
+- `sizeBytes`: 1 to 104857600 (100 MB)
+- `mediaCiphertextHash`: 1-256 chars, server never decrypts
+
+**Response** (201 Created):
+```json
+{
+  "mediaId": "media-uuid",
+  "uploadUrl": "https://r2.example.com/bucket/media/...?X-Amz-Signature=...",
+  "bucketKey": "media/{userId}/{uuid}.jpg"
+}
+```
+
+**Allowed mime types per `mediaType`**:
+| `mediaType` | Allowed `mimeType` |
+|---|---|
+| `IMAGE` | `image/jpeg`, `image/png`, `image/webp`, `image/gif` |
+| `VIDEO` | `video/mp4`, `video/quicktime` |
+| `AUDIO` | `audio/mpeg`, `audio/ogg`, `audio/aac`, `audio/mp4` |
+| `DOCUMENT` | `application/pdf`, `text/plain` |
+
+**Errors**:
+- 400: `sizeBytes` exceeds 100 MB
+- 400: `mimeType` not in the allowlist for the declared `mediaType`
+
+---
+
+### Complete Media Upload
+
+Verify the R2 PUT succeeded with the expected size and flip the row to `COMPLETE`. Required before binding to a message.
+
+```
+POST /messages/media/:mediaId/complete
+```
+
+**Authentication**: Required (JWT)
+
+**Request Body**:
+```json
+{
+  "sizeBytes": 245678
+}
+```
+
+**Response** (200 OK):
+```json
+{
+  "id": "media-uuid",
+  "bucketKey": "media/{userId}/{uuid}.jpg",
+  "mediaType": "IMAGE",
+  "mimeType": "image/jpeg",
+  "sizeBytes": 245678
+}
+```
+
+**Errors**:
+- 400: Media is already `COMPLETE` or `FAILED`
+- 400: Size mismatch — `HeadObject` returned a different `ContentLength` than `sizeBytes`
+- 403: Caller is not the owner of the media
+- 404: Media not found
+
+---
+
+### Get Media Download URL
+
+Get a short-lived presigned R2 GET URL for an attachment. Caller must be a thread participant or group member of the parent message.
+
+```
+GET /messages/media/:mediaId/download-url
+```
+
+**Authentication**: Required (JWT)
+
+**Response** (200 OK):
+```json
+{
+  "downloadUrl": "https://r2.example.com/bucket/media/...?X-Amz-Signature=...",
+  "expiresIn": 300
+}
+```
+
+**Errors**:
+- 400: Media is not yet attached to a message
+- 403: Media upload is not yet complete
+- 403: Caller cannot access the parent message (not a thread participant or group member)
+- 404: Media not found
 
 ---
 

@@ -34,4 +34,6 @@ export const envValidationSchema = Joi.object({
   INTERNAL_API_KEY: Joi.string().min(32).required(),
   MESSAGE_EDIT_DELETE_LIMIT_HOURS: Joi.number().default(48),
   ENABLE_MESSAGE_EDIT_DELETE_LIMIT: Joi.boolean().default(true),
+  MEDIA_MAX_ATTACHMENTS_PER_MESSAGE: Joi.number().default(10),
+  MEDIA_PENDING_TIMEOUT_HOURS: Joi.number().default(24),
 });

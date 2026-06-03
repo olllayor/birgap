@@ -100,6 +100,7 @@ describe('R2Service', () => {
         'video/mp4',
         1024 * 1024 * 50, // 50MB
         'media',
+        'VIDEO',
       );
 
       expect(result.uploadUrl).toBe('https://mock-presigned-url.com/upload');
@@ -115,6 +116,7 @@ describe('R2Service', () => {
           'video/mp4',
           1024 * 1024 * 105, // 105MB
           'media',
+          'VIDEO',
         ),
       ).rejects.toThrow('Media size exceeds limit of 100MB');
     });

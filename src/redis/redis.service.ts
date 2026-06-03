@@ -54,6 +54,25 @@ export class RedisService implements OnModuleDestroy {
     return (await this.client.scard(`device:${deviceId}:sockets`)) > 0;
   }
 
+  async getDevicesWithSockets(deviceIds: string[]): Promise<Set<string>> {
+    if (deviceIds.length === 0) {
+      return new Set();
+    }
+    await this.ensureConnected();
+    const pipe = this.client.pipeline();
+    for (const id of deviceIds) {
+      pipe.scard(`device:${id}:sockets`);
+    }
+    const results = await pipe.exec();
+    const online = new Set<string>();
+    results?.forEach(([err, count], i) => {
+      if (!err && Number(count) > 0) {
+        online.add(deviceIds[i]);
+      }
+    });
+    return online;
+  }
+
   async pruneStaleSockets(userId: string, deviceId: string) {
     await this.ensureConnected();
     const userKey = `user:${userId}:sockets`;

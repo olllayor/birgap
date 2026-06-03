@@ -1,6 +1,7 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
+  ArrayMaxSize,
   ArrayMinSize,
   IsArray,
   IsDefined,
@@ -41,6 +42,17 @@ export class SendMessageDto {
   @IsOptional()
   @IsUUID()
   replyToMessageId?: string;
+
+  @ApiProperty({
+    type: [String],
+    required: false,
+    description: 'Pre-uploaded mediaIds to attach to this message. Each must be owned by the sender, COMPLETE, and not yet bound to a message.',
+  })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(10)
+  @IsUUID('all', { each: true })
+  mediaIds?: string[];
 
   @ApiProperty({ type: [MessageEnvelopeDto] })
   @IsArray()

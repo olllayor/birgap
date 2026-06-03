@@ -31,6 +31,8 @@ import { MetricsModule } from './metrics/metrics.module';
 import { QueuesModule } from './queues/queues.module';
 import { PruneService } from './common/tasks/prune.service';
 import { PruneProcessor } from './common/tasks/prune.processor';
+import { MediaCleanupService } from './common/tasks/media-cleanup.service';
+import { MediaCleanupProcessor } from './common/tasks/media-cleanup.processor';
 import { UnreadModule } from './unread/unread.module';
 import { ReactionsModule } from './reactions/reactions.module';
 
@@ -79,6 +81,14 @@ import { ReactionsModule } from './reactions/reactions.module';
         backoff: { type: 'exponential', delay: 60000 },
       },
     }),
+    BullModule.registerQueue({
+      name: 'media-cleanup',
+      defaultJobOptions: {
+        removeOnComplete: { count: 10, age: 7 * 24 * 3600 },
+        removeOnFail: { count: 50, age: 7 * 24 * 3600 },
+        attempts: 1,
+      },
+    }),
     GraphQLModule.forRootAsync<ApolloDriverConfig>({
       driver: ApolloDriver,
       imports: [ConfigModule],
@@ -123,6 +133,8 @@ import { ReactionsModule } from './reactions/reactions.module';
   providers: [
     PruneService,
     PruneProcessor,
+    MediaCleanupService,
+    MediaCleanupProcessor,
     {
       provide: APP_GUARD,
       useClass: GqlThrottlerGuard,

@@ -45,6 +45,19 @@ enum EnvelopeStatus {
   READ
 }
 
+enum MediaType {
+  IMAGE
+  VIDEO
+  AUDIO
+  DOCUMENT
+}
+
+enum UploadStatus {
+  PENDING
+  COMPLETE
+  FAILED
+}
+
 model User {
   id          String     @id @default(uuid()) @db.Uuid
   phoneHash   String     @unique
@@ -66,6 +79,7 @@ model User {
   backups         BackupBlob[]
   groupMembers    GroupMember[]
   reactions       MessageReaction[]
+  media           MessageMedia[]
 }
 
 model Device {
@@ -159,6 +173,7 @@ model Message {
   envelopes    MessageEnvelope[]
   reactions    MessageReaction[]
   adminDeletes MessageAdminDeleteLog[]
+  media        MessageMedia[]
 
   @@unique([senderDeviceId, idempotencyKey])
   @@unique([threadId, threadSequence])
@@ -166,6 +181,35 @@ model Message {
   @@index([threadId, threadSequence])
   @@index([groupId, threadSequence])
   @@index([replyToMessageId])
+}
+
+model MessageMedia {
+  id                      String       @id @default(uuid()) @db.Uuid
+  userId                  String       @db.Uuid
+  messageId               String?      @db.Uuid
+  mediaType               MediaType
+  bucketKey               String       @unique
+  mimeType                String
+  sizeBytes               Int
+  filename                String
+  thumbnailBucketKey      String?
+  width                   Int?
+  height                  Int?
+  duration                Int?
+  mediaCiphertextHash     String
+  thumbnailCiphertextHash String?
+  uploadStatus            UploadStatus @default(PENDING)
+  uploadedAt              DateTime?
+  uploadSessionId         String?      @unique @db.Uuid
+  createdAt               DateTime     @default(now())
+
+  user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  message Message? @relation(fields: [messageId], references: [id], onDelete: SetNull)
+
+  @@index([userId, uploadStatus])
+  @@index([messageId])
+  @@index([bucketKey])
+  @@index([uploadStatus, createdAt])
 }
 
 model MessageEnvelope {

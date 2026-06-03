@@ -8,6 +8,7 @@ import { ConfigService } from '@nestjs/config';
 import { CreateGroupDto } from './dto/create-group.dto';
 import { SendGroupMessageDto } from './dto/send-group-message.dto';
 import { EditGroupMessageDto } from './dto/edit-group-message.dto';
+import { MediaService } from '../messages/media.service';
 
 @Injectable()
 export class GroupsService {
@@ -15,6 +16,7 @@ export class GroupsService {
     private readonly prisma: PrismaService,
     private readonly redis: RedisService,
     private readonly config: ConfigService,
+    private readonly mediaService: MediaService,
     @InjectQueue('group-fanout') private readonly fanoutQueue: Queue,
     @InjectQueue('group-edit-fanout') private readonly editFanoutQueue: Queue,
   ) {}
@@ -162,7 +164,11 @@ export class GroupsService {
         replyToMessageId = replyTarget.id;
       }
 
-      return tx.message.create({
+      if (dto.mediaIds?.length) {
+        await this.mediaService.assertAttachmentsOwned(senderUserId, dto.mediaIds, tx);
+      }
+
+      const message = await tx.message.create({
         data: {
           groupId,
           senderUserId,
@@ -172,6 +178,15 @@ export class GroupsService {
           replyToMessageId,
         },
       });
+
+      if (dto.mediaIds?.length) {
+        await tx.messageMedia.updateMany({
+          where: { id: { in: dto.mediaIds }, userId: senderUserId, messageId: null },
+          data: { messageId: message.id },
+        });
+      }
+
+      return message;
     });
 
     await this.fanoutQueue.add('fanout', {
@@ -183,6 +198,7 @@ export class GroupsService {
       threadSequence: result.threadSequence,
       replyToMessageId: result.replyToMessageId,
       createdAt: result.createdAt.toISOString(),
+      mediaIds: dto.mediaIds ?? [],
     });
 
     return { success: true, messageId: result.id, queued: true };

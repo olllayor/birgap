@@ -25,6 +25,9 @@ describe('GroupFanoutProcessor', () => {
       messageEnvelope: {
         createMany: jest.fn(),
       },
+      messageMedia: {
+        findMany: jest.fn().mockResolvedValue([]),
+      },
     } as unknown as PrismaService;
 
     const events = {
@@ -50,6 +53,9 @@ describe('GroupFanoutProcessor', () => {
       messageEnvelope: {
         createMany: jest.fn().mockResolvedValue({ count: 3 }),
       },
+      messageMedia: {
+        findMany: jest.fn().mockResolvedValue([]),
+      },
     } as unknown as PrismaService;
 
     const events = {
@@ -66,7 +72,9 @@ describe('GroupFanoutProcessor', () => {
         senderDeviceId: 'dev-1-sender',
         ciphertext: 'cipher',
         threadSequence: 5,
+        replyToMessageId: null,
         createdAt: new Date('2026-05-20T00:00:00Z').toISOString(),
+        mediaIds: [],
       },
     } as unknown as Job<GroupFanoutJobData>;
 
@@ -103,7 +111,9 @@ describe('GroupFanoutProcessor', () => {
       senderUserId: 'user-1',
       senderDeviceId: 'dev-1-sender',
       threadSequence: 5,
+      replyToMessageId: null,
       createdAt,
+      media: [],
       envelopes: [
         {
           messageId: 'msg-1',
@@ -121,7 +131,9 @@ describe('GroupFanoutProcessor', () => {
             senderUserId: 'user-1',
             senderDeviceId: 'dev-1-sender',
             threadSequence: 5,
+            replyToMessageId: null,
             createdAt,
+            media: [],
           },
         },
         {
@@ -140,7 +152,9 @@ describe('GroupFanoutProcessor', () => {
             senderUserId: 'user-1',
             senderDeviceId: 'dev-1-sender',
             threadSequence: 5,
+            replyToMessageId: null,
             createdAt,
+            media: [],
           },
         },
         {
@@ -159,7 +173,9 @@ describe('GroupFanoutProcessor', () => {
             senderUserId: 'user-1',
             senderDeviceId: 'dev-1-sender',
             threadSequence: 5,
+            replyToMessageId: null,
             createdAt,
+            media: [],
           },
         },
       ],

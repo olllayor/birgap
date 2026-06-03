@@ -1,4 +1,5 @@
 import { Field, ID, Int, ObjectType } from '@nestjs/graphql';
+import { MessageMediaType } from './message-media.model';
 
 @ObjectType('Message')
 export class MessageType {
@@ -25,6 +26,9 @@ export class MessageType {
 
   @Field(() => MessageType, { nullable: true })
   replyTo?: MessageType | null;
+
+  @Field(() => [MessageMediaType!]!)
+  media!: MessageMediaType[];
 
   @Field()
   createdAt!: Date;

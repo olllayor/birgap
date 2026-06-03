@@ -47,6 +47,7 @@ birgap_app/
 │   │   │   ├── prekey_api.dart               # POST/GET/PUT /devices/:id/prekeys/*
 │   │   │   ├── user_api.dart                 # GET /users/:id/devices/key-bundles
 │   │   │   ├── message_api.dart              # POST /messages, GET /messages/pending, POST /messages/:id/ack
+│   │   │   ├── media_api.dart                # POST /messages/media/init, /complete, GET /messages/media/:id/download-url
 │   │   │   ├── backup_api.dart               # POST /backups/*
 │   │   │   └── realtime_api.dart             # POST /realtime/token
 │   │   │
@@ -548,6 +549,79 @@ class BackupApi {
     return response.data;
   }
 }
+```
+
+### `media_api.dart`
+
+```dart
+class MediaApi {
+  final Dio _dio;
+  MediaApi(this._dio);
+
+  /// Step 1: claim a slot and get a presigned R2 PUT URL.
+  Future<MediaInitResult> init({
+    required String mediaType,
+    required String filename,
+    required String mimeType,
+    required int sizeBytes,
+    required String mediaCiphertextHash,
+    int? width,
+    int? height,
+    int? duration,
+  }) async {
+    final response = await _dio.post(ApiEndpoints.mediaInit, data: {
+      'mediaType': mediaType,
+      'filename': filename,
+      'mimeType': mimeType,
+      'sizeBytes': sizeBytes,
+      'mediaCiphertextHash': mediaCiphertextHash,
+      if (width != null) 'width': width,
+      if (height != null) 'height': height,
+      if (duration != null) 'duration': duration,
+    });
+    return MediaInitResult.fromJson(response.data);
+  }
+
+  /// Step 2: PUT the encrypted blob directly to R2.
+  Future<void> uploadToR2({
+    required String uploadUrl,
+    required List<int> encryptedBytes,
+    required String mimeType,
+    required int sizeBytes,
+  }) async {
+    await Dio().put(
+      uploadUrl,
+      data: Stream.fromIterable([encryptedBytes]),
+      options: Options(
+        headers: {
+          Headers.contentLengthHeader: sizeBytes,
+          Headers.contentTypeHeader: mimeType,
+        },
+      ),
+    );
+  }
+
+  /// Step 3: verify the PUT and flip the row to COMPLETE.
+  Future<void> complete(String mediaId, int sizeBytes) async {
+    await _dio.post(
+      ApiEndpoints.mediaComplete(mediaId),
+      data: {'sizeBytes': sizeBytes},
+    );
+  }
+
+  /// Fetch a short-lived presigned download URL.
+  Future<String> getDownloadUrl(String mediaId) async {
+    final response = await _dio.get(ApiEndpoints.mediaDownloadUrl(mediaId));
+    return response.data['downloadUrl'] as String;
+  }
+}
+```
+
+Where `ApiEndpoints` gains:
+```dart
+static const String mediaInit = '/messages/media/init';
+static String mediaComplete(String id) => '/messages/media/$id/complete';
+static String mediaDownloadUrl(String id) => '/messages/media/$id/download-url';
 ```
 
 ---

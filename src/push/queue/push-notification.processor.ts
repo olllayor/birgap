@@ -4,9 +4,15 @@ import { ConfigService } from '@nestjs/config';
 import { Job } from 'bullmq';
 import * as admin from 'firebase-admin';
 import { PrismaService } from '../../prisma/prisma.service';
+import { RedisService } from '../../redis/redis.service';
 import { FcmProvider } from '../fcm.provider';
 import { PushNotificationJobData } from './push-notification-job.interface';
 import { QueueMetrics } from '../../metrics/queue.metrics';
+
+const SILENT_APNS = {
+  payload: { aps: { contentAvailable: true } },
+  headers: { 'apns-push-type': 'background' as const, 'apns-priority': '5' },
+};
 
 @Processor('push-notifications', { concurrency: 10 })
 export class PushNotificationProcessor extends WorkerHost {
@@ -17,6 +23,7 @@ export class PushNotificationProcessor extends WorkerHost {
     private readonly config: ConfigService,
     private readonly fcm: FcmProvider,
     private readonly queueMetrics: QueueMetrics,
+    private readonly redis: RedisService,
   ) {
     super();
   }
@@ -85,7 +92,12 @@ export class PushNotificationProcessor extends WorkerHost {
       select: { id: true, userId: true, pushToken: true, pushPlatform: true },
     });
 
-    const fcmDevices = devices.filter((d) => d.pushPlatform === 'FCM' && d.pushToken);
+    const candidates = devices.filter((d) => d.pushPlatform === 'FCM' && d.pushToken);
+    if (candidates.length === 0) {
+      return;
+    }
+
+    const fcmDevices = await this.filterOnlineDevices(candidates);
     if (fcmDevices.length === 0) {
       return;
     }
@@ -95,11 +107,7 @@ export class PushNotificationProcessor extends WorkerHost {
       data: { type: 'new_message' },
       tokens,
       android: { priority: 'high' },
-      apns: {
-        payload: {
-          aps: { contentAvailable: true },
-        },
-      },
+      apns: SILENT_APNS,
     };
 
     const response = await this.fcm.getMessaging().sendEachForMulticast(message);
@@ -148,7 +156,12 @@ export class PushNotificationProcessor extends WorkerHost {
       select: { id: true, userId: true, pushToken: true, pushPlatform: true },
     });
 
-    const fcmDevices = devices.filter((d) => d.pushPlatform === 'FCM' && d.pushToken);
+    const candidates = devices.filter((d) => d.pushPlatform === 'FCM' && d.pushToken);
+    if (candidates.length === 0) {
+      return;
+    }
+
+    const fcmDevices = await this.filterOnlineDevices(candidates);
     if (fcmDevices.length === 0) {
       return;
     }
@@ -158,15 +171,7 @@ export class PushNotificationProcessor extends WorkerHost {
       data: { type: `message_${type}` },
       tokens,
       android: { priority: 'high' },
-      apns: {
-        payload: {
-          aps: { contentAvailable: true },
-        },
-        headers: {
-          'apns-push-type': 'background',
-          'apns-priority': '5',
-        },
-      },
+      apns: SILENT_APNS,
     };
 
     const response = await this.fcm.getMessaging().sendEachForMulticast(message);
@@ -197,6 +202,26 @@ export class PushNotificationProcessor extends WorkerHost {
         });
         this.logger.log(`Cleared ${staleTokens.length} stale FCM tokens`);
       }
+    }
+  }
+
+  private async filterOnlineDevices<
+    T extends { id: string; pushToken: string | null; pushPlatform: string | null },
+  >(devices: T[]): Promise<T[]> {
+    if (devices.length === 0) {
+      return [];
+    }
+    // P0 tradeoff: if the Redis presence check fails, return an empty list
+    // (assume online, skip push). This trades push availability for cost
+    // correctness during Redis outages. Revisit in P1 with a fail-open flag.
+    try {
+      const online = await this.redis.getDevicesWithSockets(devices.map((d) => d.id));
+      return devices.filter((d) => !online.has(d.id));
+    } catch (error) {
+      this.logger.warn(
+        `Redis presence check failed; skipping all pushes for this job: ${error instanceof Error ? error.message : error}`,
+      );
+      return [];
     }
   }
 

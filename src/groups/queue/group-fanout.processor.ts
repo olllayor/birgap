@@ -16,6 +16,7 @@ export interface GroupFanoutJobData {
   threadSequence: number;
   replyToMessageId: string | null;
   createdAt: string;
+  mediaIds: string[];
 }
 
 @Processor('group-fanout', { concurrency: 5 })
@@ -32,7 +33,7 @@ export class GroupFanoutProcessor extends WorkerHost {
   }
 
   async process(job: Job<GroupFanoutJobData>): Promise<{ fannedOutTo: number }> {
-    const { messageId, groupId, senderUserId, senderDeviceId, ciphertext, threadSequence, replyToMessageId, createdAt } = job.data;
+    const { messageId, groupId, senderUserId, senderDeviceId, ciphertext, threadSequence, replyToMessageId, createdAt, mediaIds } = job.data;
 
     // 1. Fetch all active devices for group members in a single query
     const activeDevices = await this.prisma.device.findMany({
@@ -64,6 +65,14 @@ export class GroupFanoutProcessor extends WorkerHost {
       skipDuplicates: true,
     });
 
+    // 3b. Fetch media for the event payload (cheap single query, ordered for client rendering)
+    const media = mediaIds?.length
+      ? await this.prisma.messageMedia.findMany({
+          where: { id: { in: mediaIds } },
+          orderBy: { createdAt: 'asc' },
+        })
+      : [];
+
     // 4. Construct message.created event payload from in-memory data (no DB round-trip)
     const messageEventPayload = {
       id: messageId,
@@ -74,6 +83,7 @@ export class GroupFanoutProcessor extends WorkerHost {
       threadSequence,
       replyToMessageId,
       createdAt,
+      media,
       envelopes: targetDevices.map((device) => ({
         messageId,
         recipientUserId: device.userId,
@@ -92,6 +102,7 @@ export class GroupFanoutProcessor extends WorkerHost {
           threadSequence,
           replyToMessageId,
           createdAt,
+          media,
         },
       })),
     };

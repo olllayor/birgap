@@ -38,14 +38,49 @@ type GroupMember {
 """Arbitrary JSON value"""
 scalar JSON
 
+enum MediaType {
+  """Audio media attachment"""
+  AUDIO
+  """Document media attachment"""
+  DOCUMENT
+  """Image media attachment"""
+  IMAGE
+  """Video media attachment"""
+  VIDEO
+}
+
 type Message {
   createdAt: DateTime!
+  deletedAt: DateTime
+  editedAt: DateTime
   groupId: ID
   id: ID!
+  media: [MessageMedia!]!
+  replyTo: Message
+  replyToMessageId: ID
   senderDeviceId: ID!
   senderUserId: ID!
   threadId: ID
   threadSequence: Int!
+}
+
+type MessageMedia {
+  bucketKey: String!
+  createdAt: DateTime!
+  filename: String!
+  height: Int
+  id: ID!
+  mediaCiphertextHash: String!
+  mediaType: MediaType!
+  messageId: ID!
+  mimeType: String!
+  sizeBytes: Int!
+  thumbnailBucketKey: String
+  thumbnailCiphertextHash: String
+  uploadSessionId: ID
+  uploadStatus: UploadStatus!
+  uploadedAt: DateTime
+  width: Int
 }
 
 type Query {
@@ -53,6 +88,15 @@ type Query {
   directThreads(userId: ID!): [DirectThread!]!
   group(id: ID!): Group
   groups(userId: ID!): [Group!]!
+}
+
+enum UploadStatus {
+  """Upload completed successfully"""
+  COMPLETE
+  """Upload failed"""
+  FAILED
+  """Upload pending"""
+  PENDING
 }
 
 type User {

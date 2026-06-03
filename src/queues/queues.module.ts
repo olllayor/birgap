@@ -42,6 +42,10 @@ import { QueuesController } from './queues.controller';
       name: 'reaction-fanout',
       adapter: BullMQAdapter,
     }),
+    BullBoardModule.forFeature({
+      name: 'media-cleanup',
+      adapter: BullMQAdapter,
+    }),
   ],
   controllers: [QueuesController],
 })

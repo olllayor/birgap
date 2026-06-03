@@ -4,6 +4,7 @@ import { PrismaModule } from '../prisma/prisma.module';
 import { MetricsModule } from '../metrics/metrics.module';
 import { UserLoader } from '../common/loaders/user.loader';
 import { MessageLoader } from '../common/loaders/message.loader';
+import { MessagesModule } from '../messages/messages.module';
 import { GroupsService } from './groups.service';
 import { GroupsController } from './groups.controller';
 import { GroupsResolver } from './groups.resolver';
@@ -33,6 +34,7 @@ import { GroupEditFanoutProcessor } from './queue/group-edit-fanout.processor';
     }),
     PrismaModule,
     MetricsModule,
+    MessagesModule,
   ],
   providers: [GroupsService, GroupsResolver, GroupMemberResolver, UserLoader, MessageLoader, GroupFanoutProcessor, GroupEditFanoutProcessor],
   controllers: [GroupsController],
