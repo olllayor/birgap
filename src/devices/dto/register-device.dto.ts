@@ -10,7 +10,7 @@ export class RegisterDeviceDto {
 
   @ApiProperty({ enum: DevicePlatform })
   @IsEnum(DevicePlatform)
-  platform: DevicePlatform;
+  platform!: DevicePlatform;
 
   @ApiPropertyOptional()
   @IsOptional()
@@ -20,7 +20,7 @@ export class RegisterDeviceDto {
   @ApiProperty()
   @IsString()
   @MinLength(16)
-  identityPublicKey: string;
+  identityPublicKey!: string;
 
   @ApiPropertyOptional()
   @IsOptional()
@@ -30,6 +30,8 @@ export class RegisterDeviceDto {
   @ApiPropertyOptional({ enum: PushPlatform })
   @IsOptional()
   @IsEnum(PushPlatform)
+  // FCM is the only currently-shipping provider; APNS/HMS values are reserved.
+  // iOS clients must register with pushPlatform='FCM' (FCM bridges to APNS).
   pushPlatform?: PushPlatform;
 
   @ApiPropertyOptional({ default: false })

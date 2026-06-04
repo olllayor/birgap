@@ -3,9 +3,15 @@ import { ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import { NextFunction, Request, Response } from 'express';
 import helmet from 'helmet';
 import { AppModule } from './app.module';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
+import {
+  INTERNAL_API_KEY_HEADER,
+  INTERNAL_API_KEY_MESSAGES,
+  validateInternalApiKey,
+} from './common/guards/internal-api-key.validator';
 
 async function bootstrap() {
   const logger = new Logger('Bootstrap');
@@ -29,6 +35,26 @@ async function bootstrap() {
     origin: config.get<string>('APP_ORIGIN') ?? true,
     credentials: true,
   });
+
+  // Bull-board mounts its own Express handler at /queues outside of Nest's
+  // controller pipeline, so @UseGuards on QueuesController never fires.
+  // Reuse the shared validator so policy can't drift between guard and edge.
+  const internalApiKey = config.getOrThrow<string>('INTERNAL_API_KEY');
+  app.use('/queues', (req: Request, res: Response, next: NextFunction) => {
+    const result = validateInternalApiKey(
+      req.headers[INTERNAL_API_KEY_HEADER],
+      internalApiKey,
+    );
+    if (!result.ok) {
+      res.status(403).json({
+        statusCode: 403,
+        message: INTERNAL_API_KEY_MESSAGES[result.reason],
+      });
+      return;
+    }
+    next();
+  });
+
   app.useGlobalFilters(new HttpExceptionFilter());
   app.useGlobalPipes(
     new ValidationPipe({

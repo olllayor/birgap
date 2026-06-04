@@ -4,7 +4,7 @@ import { IsInt, IsOptional, IsString, IsUUID, Max, Min } from 'class-validator';
 export class PendingQueryDto {
   @ApiProperty()
   @IsUUID()
-  deviceId: string;
+  deviceId!: string;
 
   @ApiProperty({ required: false, description: 'Cursor: fetch envelopes after this sequence number' })
   @IsOptional()

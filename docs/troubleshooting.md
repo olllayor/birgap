@@ -56,6 +56,9 @@ redis-cli ping
 brew services start redis
 ```
 
+**Redis Connection Resilience**:
+The Redis client uses exponential backoff for reconnection (max 2s delay). Transient network errors (`ECONNREFUSED`, `ETIMEDOUT`, `ECONNRESET`, `EPIPE`) trigger automatic reconnection. Check server logs if Redis remains unreachable after recovery.
+
 ---
 
 #### Error: `Invalid JWT secret: must be at least 24 characters`
@@ -407,7 +410,7 @@ await fetch('/devices/register', {
 
 #### Slow API Responses
 
-**Cause**: Database connection pool exhaustion or slow queries.
+**Cause**: Database connection pool exhaustion, slow queries, or missing connection pooler in production.
 
 **Solution**:
 ```bash
@@ -417,9 +420,17 @@ docker compose exec postgres psql -U postgres -c "SELECT count(*) FROM pg_stat_a
 # Check slow queries
 docker compose exec postgres psql -U postgres -c "SELECT * FROM pg_stat_activity WHERE state = 'active';"
 
+# Verify connection_limit is set in DATABASE_URL
+grep connection_limit .env
+# Should show: connection_limit=10 (or your configured value)
+
 # Restart application if needed
 pm2 restart birgap
 ```
+
+**Prevention**:
+- Development: set `connection_limit=10` in `DATABASE_URL`
+- Production: use PgBouncer or Supavisor (see [Deployment Guide](./deployment.md#connection-pooling))
 
 ---
 

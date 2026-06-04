@@ -1,17 +1,26 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { S3Client, HeadObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { PutObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
 import { randomUUID } from 'crypto';
 
+export const ALLOWED_MEDIA_MIME: Record<'IMAGE' | 'VIDEO' | 'AUDIO' | 'DOCUMENT', string[]> = {
+  IMAGE: ['image/jpeg', 'image/png', 'image/webp', 'image/gif'],
+  VIDEO: ['video/mp4', 'video/quicktime'],
+  AUDIO: ['audio/mpeg', 'audio/ogg', 'audio/aac', 'audio/mp4'],
+  DOCUMENT: ['application/pdf', 'text/plain'],
+};
+
+const ALLOWED_AVATAR_MIME = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+
 @Injectable()
 export class R2Service implements OnModuleInit {
   private readonly logger = new Logger(R2Service.name);
-  private client: S3Client;
-  private bucket: string;
-  private putTtl: number;
-  private getTtl: number;
+  private client!: S3Client;
+  private bucket!: string;
+  private putTtl!: number;
+  private getTtl!: number;
 
   constructor(private readonly config: ConfigService) {}
 
@@ -49,20 +58,37 @@ export class R2Service implements OnModuleInit {
     mimeType: string,
     sizeBytes: number,
     purpose: 'avatar' | 'media',
+    mediaType?: 'IMAGE' | 'VIDEO' | 'AUDIO' | 'DOCUMENT',
   ): Promise<{ uploadUrl: string; bucketKey: string }> {
     const maxAvatarSize = 5 * 1024 * 1024; // 5MB
     const maxMediaSize = 100 * 1024 * 1024; // 100MB
 
     if (purpose === 'avatar' && sizeBytes > maxAvatarSize) {
-      throw new Error(`Avatar size exceeds limit of 5MB: got ${sizeBytes} bytes`);
+      throw new BadRequestException(`Avatar size exceeds limit of 5MB: got ${sizeBytes} bytes`);
     }
     if (purpose === 'media' && sizeBytes > maxMediaSize) {
-      throw new Error(`Media size exceeds limit of 100MB: got ${sizeBytes} bytes`);
+      throw new BadRequestException(`Media size exceeds limit of 100MB: got ${sizeBytes} bytes`);
     }
 
-    const allowedAvatarMimeTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
-    if (purpose === 'avatar' && !allowedAvatarMimeTypes.includes(mimeType)) {
-      throw new Error(`Invalid avatar mime type: ${mimeType}. Only jpeg, png, webp, and gif are allowed.`);
+    if (purpose === 'avatar' && !ALLOWED_AVATAR_MIME.includes(mimeType)) {
+      throw new BadRequestException(
+        `Invalid avatar mime type: ${mimeType}. Only jpeg, png, webp, and gif are allowed.`,
+      );
+    }
+
+    if (purpose === 'media') {
+      if (!mediaType) {
+        throw new BadRequestException('mediaType is required for media uploads');
+      }
+      const allowed = ALLOWED_MEDIA_MIME[mediaType];
+      if (!allowed) {
+        throw new BadRequestException(`Invalid mediaType: ${mediaType}`);
+      }
+      if (!allowed.includes(mimeType)) {
+        throw new BadRequestException(
+          `Invalid mime type for ${mediaType}: ${mimeType}. Allowed: ${allowed.join(', ')}`,
+        );
+      }
     }
 
     const uuid = randomUUID();

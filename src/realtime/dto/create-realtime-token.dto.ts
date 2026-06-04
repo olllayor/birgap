@@ -4,5 +4,5 @@ import { IsUUID } from 'class-validator';
 export class CreateRealtimeTokenDto {
   @ApiProperty()
   @IsUUID()
-  deviceId: string;
+  deviceId!: string;
 }

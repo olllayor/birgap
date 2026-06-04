@@ -118,7 +118,7 @@ Client                          Server
   │                               │
 ```
 
-### Message Send Flow
+### Direct Message Send Flow
 
 ```
 Sender Client                    Server                     Recipient Client
@@ -129,7 +129,7 @@ Sender Client                    Server                     Recipient Client
      ├─ POST /messages ────────────►│                              │
      │  { envelopes: [...] }        │                              │
      │                              ├─ emit message.new ──────────►│
-     │                              ├─ push notification ─────────►│
+     │                              ├─ push notification (async) ─►│
      │                              │                              │
      │◄─ 200 OK ────────────────────┤                              │
      │  { id, threadSequence }      │                              │
@@ -137,6 +137,26 @@ Sender Client                    Server                     Recipient Client
      │                              │◄─ POST /messages/:id/ack ────┤
      │                              │   { status: "DELIVERED" }    │
      │◄─ emit message.ack ──────────┤                              │
+     │                              │                              │
+```
+
+### Group Message Send Flow
+
+```
+Sender Client                    Server                     Recipient Clients
+     │                              │                              │
+     ├─ POST /groups/:id/messages ─►│                              │
+     │  { ciphertext }              │                              │
+     │                              ├─ Queue job (group-fanout)   │
+     │◄─ 200 OK ────────────────────┤                              │
+     │  { queued: true }              │                              │
+     │                              │                              │
+     │                         Processor (async)                   │
+     │                              │                              │
+     │                              ├─ Single query: active devices│
+     │                              ├─ Batch insert envelopes      │
+     │                              ├─ emit message.new ─────────►│
+     │                              ├─ push notification (async) ──►│
      │                              │                              │
 ```
 
@@ -191,8 +211,10 @@ Client                          Server                         R2 Storage
 - **User**: Identified by hashed phone number, status (ACTIVE/SUSPENDED)
 - **Device**: Per-device identity with platform, push tokens, active state
 - **DirectThread**: Unique 1:1 conversation between two users
-- **Message**: Logical message with server-assigned thread sequence
-- **MessageEnvelope**: Per-device encrypted ciphertext with delivery status
+- **Message**: Logical message with server-assigned thread sequence. Supports tombstone (`deletedAt`) and edit (`editedAt`) markers.
+- **MessageEnvelope**: Per-device encrypted ciphertext with delivery status. `envelopeVersion` is bumped on each edit.
+- **HiddenMessage**: Per-user local deletion record (delete for me).
+- **MessageAdminDeleteLog**: Audit trail for group admin deletions.
 
 ### Cryptographic Entities
 
@@ -222,6 +244,8 @@ User (A) ──── (1) DirectThread ──── (1) User (B)
 DirectThread (1) ──── (N) Message
 Message (1) ──── (N) MessageEnvelope
 MessageEnvelope (N) ──── (1) Device (recipient)
+Message (1) ──── (N) MessageAdminDeleteLog
+User (N) ──── (N) HiddenMessage
 ```
 
 ## Infrastructure Components
@@ -233,8 +257,10 @@ MessageEnvelope (N) ──── (1) Device (recipient)
 
 ### Redis
 - Device-to-socket mapping for real-time routing
+- Group member list cache for typing indicators (TTL 5 min)
 - Ephemeral state for active connections
 - Ping/pong health monitoring
+- Connection resilience with exponential backoff retry strategy
 
 ### Cloudflare R2 (S3-Compatible)
 - Encrypted backup blob storage
@@ -276,8 +302,14 @@ Internal events via `@nestjs/event-emitter`:
 
 | Event | Payload | Emitted By | Handled By |
 |-------|---------|------------|------------|
-| `message.created` | Serialized message | MessagesService | RealtimeGateway |
+| `message.created` | Serialized message | MessagesService, GroupFanoutProcessor | RealtimeGateway |
 | `message.ack` | ACK payload | MessagesService | RealtimeGateway |
+| `message.deleted` | Delete payload | MessagesService | RealtimeGateway |
+| `message.deleted.group` | Delete payload | MessagesService | RealtimeGateway |
+| `message.edited` | Edit payload | MessagesService | RealtimeGateway |
+| `message.edited.group` | Edit payload | MessagesService, GroupEditFanoutProcessor | RealtimeGateway |
+
+**Push Notification Decoupling**: `RealtimeGateway.onMessageCreated` emits Socket.IO events immediately and fires push notification wakeups asynchronously. Push delivery (FCM) does not block realtime delivery.
 
 External WebSocket events:
 
@@ -285,6 +317,8 @@ External WebSocket events:
 |-------|-----------|-------------|
 | `message.new` | Server → Client | New encrypted envelope |
 | `message.ack` | Server → Client | Delivery/read status update |
+| `message.deleted` | Server → Client | Message tombstoned (delete for everyone) |
+| `message.edited` | Server → Client | Message edited (new ciphertext available) |
 | `typing.start` | Bidirectional | User started typing |
 | `typing.stop` | Bidirectional | User stopped typing |
 | `presence.active` | Server → Client | User/device came online |

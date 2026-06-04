@@ -5,10 +5,10 @@ export class UploadUrlDto {
   @ApiProperty()
   @IsInt()
   @Min(1)
-  sizeBytes: number;
+  sizeBytes!: number;
 
   @ApiProperty()
   @IsInt()
   @Min(1)
-  version: number;
+  version!: number;
 }

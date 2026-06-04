@@ -128,7 +128,7 @@ services:
     env_file:
       - .env
     depends_on:
-      - postgres
+      - pgbouncer
       - redis
     restart: unless-stopped
     healthcheck:
@@ -146,8 +146,24 @@ services:
       POSTGRES_DB: birgap
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  pgbouncer:
+    image: pgbouncer/pgbouncer:1.23
+    environment:
+      DATABASES_HOST: postgres
+      DATABASES_PORT: 5432
+      DATABASES_DATABASE: birgap
+      DATABASES_USER: ${POSTGRES_USER}
+      DATABASES_PASSWORD: ${POSTGRES_PASSWORD}
+      POOL_MODE: transaction
+      MAX_CLIENT_CONN: 1000
+      DEFAULT_POOL_SIZE: 20
+      RESERVE_POOL_SIZE: 5
     ports:
-      - "5432:5432"
+      - "6543:5432"
+    depends_on:
+      - postgres
     restart: unless-stopped
 
   redis:
@@ -285,16 +301,43 @@ npx prisma migrate status
 
 ### Connection Pooling
 
-For high-traffic deployments, use connection pooling:
+Prisma has a built-in connection pool, but under load with multiple app instances the total connections can exhaust PostgreSQL's `max_connections`. Use an external pooler for production.
 
-- **PgBouncer**: Lightweight connection pooler
-- **Supavisor**: Modern connection pooler
-- **AWS RDS Proxy**: Managed pooling
+**Layer 1: Prisma connection pool** (per instance):
+- Default size: `num_cpus * 2 + 1`
+- Override with `connection_limit` in `DATABASE_URL`
+- Recommended: `5–10` per instance when using an external pooler
 
-Configure pool size in `DATABASE_URL`:
+**Layer 2: External pooler** (shared across all instances):
+
+| Pooler | Mode | Notes |
+|--------|------|-------|
+| **PgBouncer** | Transaction | Fast, lightweight; requires `pgbouncer=true` in Prisma URL |
+| **Supavisor** | Transaction | Supabase-native; set `pgbouncer=true` |
+| **AWS RDS Proxy** | Session | Managed; no `pgbouncer=true` needed |
+
+**Production `DATABASE_URL` with PgBouncer:**
+```env
+DATABASE_URL=postgresql://user:pass@pooler:6543/birgap?schema=public&pgbouncer=true&connection_limit=10
 ```
-DATABASE_URL=postgresql://user:pass@pooler:6543/birgap?pgbouncer=true
+
+**Sizing formula:**
 ```
+PgBouncer DEFAULT_POOL_SIZE ≤ PostgreSQL max_connections × 0.8
+Prisma connection_limit × number of app instances ≤ PgBouncer MAX_CLIENT_CONN
+```
+
+The whole point of a transaction-mode pooler is that `DEFAULT_POOL_SIZE` (real
+PG connections) can be much smaller than the sum of Prisma client connections,
+because short-lived transactions multiplex over the pool. `MAX_CLIENT_CONN`
+caps how many client-side sockets PgBouncer accepts and must be ≥ total Prisma
+connections, while `DEFAULT_POOL_SIZE` is sized to PostgreSQL's headroom.
+
+Example for 4 instances:
+- Prisma `connection_limit=10` per instance → 40 total client sockets
+- PgBouncer `MAX_CLIENT_CONN=100` → comfortably above 40
+- PgBouncer `DEFAULT_POOL_SIZE=20` → 20 real PG connections multiplexed
+- PostgreSQL `max_connections=100` → plenty of headroom
 
 ## Monitoring
 
@@ -486,9 +529,18 @@ ALTER SYSTEM SET effective_cache_size = '1536MB';
 # Increase max memory
 maxmemory 2gb
 
-# Eviction policy
-maxmemory-policy allkeys-lru
+# Eviction policy — MUST be noeviction for BullMQ queue safety.
+# allkeys-lru will silently evict queued jobs when memory pressure hits,
+# causing message delivery holes with no error or retry.
+maxmemory-policy noeviction
 ```
+
+> **Warning:** If you share this Redis instance with application caches
+> (session store, rate limiter, etc.), those caches will start returning
+> errors when Redis hits `maxmemory` under `noeviction`. For production,
+> use a **separate Redis instance** (or at minimum a separate Redis DB)
+> for BullMQ queues vs. cache data. Queue Redis needs `noeviction`;
+> cache Redis can use `allkeys-lru`.
 
 ## Security Hardening
 

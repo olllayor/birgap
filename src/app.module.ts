@@ -8,7 +8,9 @@ import { BullModule } from '@nestjs/bullmq';
 import { GraphQLModule } from '@nestjs/graphql';
 import { ApolloDriver, ApolloDriverConfig } from '@nestjs/apollo';
 import { join } from 'node:path';
+import { Request } from 'express';
 import depthLimit = require('graphql-depth-limit');
+import { createComplexityRule, simpleEstimator } from 'graphql-query-complexity';
 import { AuthModule } from './auth/auth.module';
 import { BackupsModule } from './backups/backups.module';
 import { DevicesModule } from './devices/devices.module';
@@ -25,7 +27,14 @@ import { UsersModule } from './users/users.module';
 import { GroupsModule } from './groups/groups.module';
 import { DirectThreadsModule } from './direct-threads/direct-threads.module';
 import { GqlThrottlerGuard } from './common/guards/gql-throttler.guard';
+import { MetricsModule } from './metrics/metrics.module';
+import { QueuesModule } from './queues/queues.module';
 import { PruneService } from './common/tasks/prune.service';
+import { PruneProcessor } from './common/tasks/prune.processor';
+import { MediaCleanupService } from './common/tasks/media-cleanup.service';
+import { MediaCleanupProcessor } from './common/tasks/media-cleanup.processor';
+import { UnreadModule } from './unread/unread.module';
+import { ReactionsModule } from './reactions/reactions.module';
 
 @Module({
   imports: [
@@ -63,6 +72,23 @@ import { PruneService } from './common/tasks/prune.service';
         };
       },
     }),
+    BullModule.registerQueue({
+      name: 'database-prune',
+      defaultJobOptions: {
+        removeOnComplete: { count: 10, age: 7 * 24 * 3600 },
+        removeOnFail: { count: 50, age: 7 * 24 * 3600 },
+        attempts: 3,
+        backoff: { type: 'exponential', delay: 60000 },
+      },
+    }),
+    BullModule.registerQueue({
+      name: 'media-cleanup',
+      defaultJobOptions: {
+        removeOnComplete: { count: 10, age: 7 * 24 * 3600 },
+        removeOnFail: { count: 50, age: 7 * 24 * 3600 },
+        attempts: 1,
+      },
+    }),
     GraphQLModule.forRootAsync<ApolloDriverConfig>({
       driver: ApolloDriver,
       imports: [ConfigModule],
@@ -74,13 +100,20 @@ import { PruneService } from './common/tasks/prune.service';
           sortSchema: true,
           playground: !isProd,
           introspection: !isProd,
-          validationRules: [depthLimit(5)],
-          context: ({ req }) => ({ req }),
+          validationRules: [
+            depthLimit(5),
+            createComplexityRule({
+              maximumComplexity: 200,
+              estimators: [simpleEstimator({ defaultScore: 1 })],
+            }),
+          ],
+          context: ({ req }: { req: Request }) => ({ req }),
         };
       },
     }),
     PrismaModule,
     RedisModule,
+    MetricsModule,
     AuthModule,
     UsersModule,
     DevicesModule,
@@ -93,9 +126,15 @@ import { PruneService } from './common/tasks/prune.service';
     GroupsModule,
     DirectThreadsModule,
     HealthModule,
+    QueuesModule,
+    UnreadModule,
+    ReactionsModule,
   ],
   providers: [
     PruneService,
+    PruneProcessor,
+    MediaCleanupService,
+    MediaCleanupProcessor,
     {
       provide: APP_GUARD,
       useClass: GqlThrottlerGuard,

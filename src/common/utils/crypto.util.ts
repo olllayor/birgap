@@ -1,4 +1,4 @@
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash, randomBytes, randomInt } from 'node:crypto';
 
 export function sha256(value: string) {
   return createHash('sha256').update(value).digest('hex');
@@ -6,6 +6,12 @@ export function sha256(value: string) {
 
 export function randomToken(byteLength = 32) {
   return randomBytes(byteLength).toString('base64url');
+}
+
+export function randomDigits(length: number): string {
+  const min = 10 ** (length - 1);
+  const max = 10 ** length;
+  return String(randomInt(min, max));
 }
 
 export function normalizePhone(phone: string) {

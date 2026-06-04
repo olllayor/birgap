@@ -1,95 +1,68 @@
-import { GroupFanoutProcessor } from './group-fanout.processor';
+import { EventEmitter2 } from '@nestjs/event-emitter';
+import { Job } from 'bullmq';
+import { PrismaService } from '../../prisma/prisma.service';
+import { QueueMetrics } from '../../metrics/queue.metrics';
+import { UnreadService } from '../../unread/unread.service';
+import { GroupFanoutJobData, GroupFanoutProcessor } from './group-fanout.processor';
 
 describe('GroupFanoutProcessor', () => {
-  let prisma: any;
-  let events: any;
   let processor: GroupFanoutProcessor;
 
+  const mockQueueMetrics = {
+    recordCompleted: jest.fn(),
+    recordFailed: jest.fn(),
+  } as unknown as QueueMetrics;
+
+  const mockUnreadService = {
+    enqueueRecalc: jest.fn().mockResolvedValue(undefined),
+  } as unknown as UnreadService;
+
   beforeEach(() => {
-    prisma = {
-      groupMember: {
-        findMany: jest.fn(),
-      },
+    const prisma = {
       device: {
         findMany: jest.fn(),
       },
       messageEnvelope: {
         createMany: jest.fn(),
-        findMany: jest.fn(),
       },
-    };
+      messageMedia: {
+        findMany: jest.fn().mockResolvedValue([]),
+      },
+    } as unknown as PrismaService;
 
-    events = {
+    const events = {
       emit: jest.fn(),
-    };
+    } as unknown as EventEmitter2;
 
-    processor = new GroupFanoutProcessor(prisma, events);
+    processor = new GroupFanoutProcessor(prisma, events, mockQueueMetrics, mockUnreadService);
   });
 
   it('fans out message to active devices excluding sender device and emits message.created event', async () => {
-    // Mock group members
-    prisma.groupMember.findMany.mockResolvedValue([
-      { userId: 'user-1' },
-      { userId: 'user-2' },
-      { userId: 'user-3' },
-    ]);
-
-    // Mock active devices
-    prisma.device.findMany.mockResolvedValue([
-      { id: 'dev-1-sender', userId: 'user-1' },
-      { id: 'dev-1-sync', userId: 'user-1' },
-      { id: 'dev-2', userId: 'user-2' },
-      { id: 'dev-3', userId: 'user-3' },
-    ]);
-
-    // Mock envelopes queries
-    prisma.messageEnvelope.createMany.mockResolvedValue({ count: 3 });
-
-    const mockEnvelopes = [
-      {
-        id: 'env-1',
-        messageId: 'msg-1',
-        recipientUserId: 'user-1',
-        recipientDeviceId: 'dev-1-sync',
-        ciphertext: 'cipher',
-        status: 'PENDING',
-        deliveredAt: null,
-        readAt: null,
-        envelopeSequence: BigInt(100),
-        createdAt: new Date('2026-05-20T00:00:00Z'),
-        message: {
-          id: 'msg-1',
-          threadId: null,
-          groupId: 'group-1',
-          senderUserId: 'user-1',
-          senderDeviceId: 'dev-1-sender',
-          threadSequence: 5,
-          createdAt: new Date('2026-05-20T00:00:00Z'),
-        },
+    // Need to access the mock prisma instance for assertions.
+    // Since processor stores it privately, we spy via the constructor.
+    // We'll re-instantiate here with refs we can access.
+    const prisma = {
+      device: {
+        findMany: jest.fn().mockResolvedValue([
+          { id: 'dev-1-sender', userId: 'user-1' },
+          { id: 'dev-1-sync', userId: 'user-1' },
+          { id: 'dev-2', userId: 'user-2' },
+          { id: 'dev-3', userId: 'user-3' },
+        ]),
       },
-      {
-        id: 'env-2',
-        messageId: 'msg-1',
-        recipientUserId: 'user-2',
-        recipientDeviceId: 'dev-2',
-        ciphertext: 'cipher',
-        status: 'PENDING',
-        deliveredAt: null,
-        readAt: null,
-        envelopeSequence: BigInt(101),
-        createdAt: new Date('2026-05-20T00:00:00Z'),
-        message: {
-          id: 'msg-1',
-          threadId: null,
-          groupId: 'group-1',
-          senderUserId: 'user-1',
-          senderDeviceId: 'dev-1-sender',
-          threadSequence: 5,
-          createdAt: new Date('2026-05-20T00:00:00Z'),
-        },
+      messageEnvelope: {
+        createMany: jest.fn().mockResolvedValue({ count: 3 }),
       },
-    ];
-    prisma.messageEnvelope.findMany.mockResolvedValue(mockEnvelopes);
+      messageMedia: {
+        findMany: jest.fn().mockResolvedValue([]),
+      },
+    } as unknown as PrismaService;
+
+    const events = {
+      emit: jest.fn(),
+    } as unknown as EventEmitter2;
+
+    const testProcessor = new GroupFanoutProcessor(prisma, events, mockQueueMetrics, mockUnreadService);
 
     const job = {
       data: {
@@ -98,24 +71,28 @@ describe('GroupFanoutProcessor', () => {
         senderUserId: 'user-1',
         senderDeviceId: 'dev-1-sender',
         ciphertext: 'cipher',
+        threadSequence: 5,
+        replyToMessageId: null,
+        createdAt: new Date('2026-05-20T00:00:00Z').toISOString(),
+        mediaIds: [],
       },
-    } as any;
+    } as unknown as Job<GroupFanoutJobData>;
 
-    const result = await processor.process(job);
+    const result = await testProcessor.process(job);
     expect(result).toEqual({ fannedOutTo: 3 }); // dev-1-sync, dev-2, dev-3
 
-    // Verify database inserts exclude sender device
-    expect(prisma.groupMember.findMany).toHaveBeenCalledWith({
-      where: { groupId: 'group-1' },
-      select: { userId: true },
-    });
+    // Verify single combined query
     expect(prisma.device.findMany).toHaveBeenCalledWith({
       where: {
-        userId: { in: ['user-1', 'user-2', 'user-3'] },
+        user: {
+          groupMembers: { some: { groupId: 'group-1' } },
+        },
         active: true,
       },
       select: { id: true, userId: true },
     });
+
+    // Verify batch insert excludes sender device
     expect(prisma.messageEnvelope.createMany).toHaveBeenCalledWith({
       data: [
         { messageId: 'msg-1', recipientUserId: 'user-1', recipientDeviceId: 'dev-1-sync', ciphertext: 'cipher', status: 'PENDING' },
@@ -126,6 +103,7 @@ describe('GroupFanoutProcessor', () => {
     });
 
     // Verify emit matches the expected realtime gateway payload
+    const createdAt = new Date('2026-05-20T00:00:00Z').toISOString();
     expect(events.emit).toHaveBeenCalledWith('message.created', {
       id: 'msg-1',
       threadId: null,
@@ -133,10 +111,11 @@ describe('GroupFanoutProcessor', () => {
       senderUserId: 'user-1',
       senderDeviceId: 'dev-1-sender',
       threadSequence: 5,
-      createdAt: mockEnvelopes[0].message.createdAt,
+      replyToMessageId: null,
+      createdAt,
+      media: [],
       envelopes: [
         {
-          id: 'env-1',
           messageId: 'msg-1',
           recipientUserId: 'user-1',
           recipientDeviceId: 'dev-1-sync',
@@ -144,8 +123,7 @@ describe('GroupFanoutProcessor', () => {
           status: 'PENDING',
           deliveredAt: null,
           readAt: null,
-          envelopeSequence: '100', // Safely fanned out sequence string representation
-          createdAt: mockEnvelopes[0].createdAt,
+          createdAt,
           message: {
             id: 'msg-1',
             threadId: null,
@@ -153,11 +131,12 @@ describe('GroupFanoutProcessor', () => {
             senderUserId: 'user-1',
             senderDeviceId: 'dev-1-sender',
             threadSequence: 5,
-            createdAt: mockEnvelopes[0].message.createdAt,
+            replyToMessageId: null,
+            createdAt,
+            media: [],
           },
         },
         {
-          id: 'env-2',
           messageId: 'msg-1',
           recipientUserId: 'user-2',
           recipientDeviceId: 'dev-2',
@@ -165,8 +144,7 @@ describe('GroupFanoutProcessor', () => {
           status: 'PENDING',
           deliveredAt: null,
           readAt: null,
-          envelopeSequence: '101',
-          createdAt: mockEnvelopes[1].createdAt,
+          createdAt,
           message: {
             id: 'msg-1',
             threadId: null,
@@ -174,7 +152,30 @@ describe('GroupFanoutProcessor', () => {
             senderUserId: 'user-1',
             senderDeviceId: 'dev-1-sender',
             threadSequence: 5,
-            createdAt: mockEnvelopes[1].message.createdAt,
+            replyToMessageId: null,
+            createdAt,
+            media: [],
+          },
+        },
+        {
+          messageId: 'msg-1',
+          recipientUserId: 'user-3',
+          recipientDeviceId: 'dev-3',
+          ciphertext: 'cipher',
+          status: 'PENDING',
+          deliveredAt: null,
+          readAt: null,
+          createdAt,
+          message: {
+            id: 'msg-1',
+            threadId: null,
+            groupId: 'group-1',
+            senderUserId: 'user-1',
+            senderDeviceId: 'dev-1-sender',
+            threadSequence: 5,
+            replyToMessageId: null,
+            createdAt,
+            media: [],
           },
         },
       ],

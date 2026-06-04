@@ -6,12 +6,12 @@ class OneTimePrekeyDto {
   @ApiProperty()
   @IsInt()
   @Min(1)
-  keyId: number;
+  keyId!: number;
 
   @ApiProperty()
   @IsString()
   @MinLength(16)
-  publicKey: string;
+  publicKey!: string;
 }
 
 export class RefillPrekeysDto {
@@ -21,5 +21,5 @@ export class RefillPrekeysDto {
   @ArrayMaxSize(200)
   @ValidateNested({ each: true })
   @Type(() => OneTimePrekeyDto)
-  prekeys: OneTimePrekeyDto[];
+  prekeys!: OneTimePrekeyDto[];
 }

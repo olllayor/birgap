@@ -1,4 +1,5 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { UpdateProfileDto } from './dto/profile.dto';
 
@@ -35,58 +36,59 @@ export class UsersService {
     }
 
     return this.prisma.$transaction(async (tx) => {
-      const bundles: Array<{
-        deviceId: string;
-        userId: string;
-        platform: string;
-        identityPublicKey: string;
-        signedPrekey: {
-          id: string;
-          keyId: number;
-          publicKey: string;
-          signature: string;
-          createdAt: Date;
-        } | null;
-        oneTimePrekey: {
-          keyId: number;
-          publicKey: string;
-        } | null;
-      }> = [];
+      const deviceIds = devices.map((d) => d.id);
 
-      for (const device of devices) {
-        const oneTimePrekey = await tx.oneTimePrekey.findFirst({
-          where: { deviceId: device.id, consumedAt: null },
-          orderBy: { createdAt: 'asc' },
-          select: { id: true, keyId: true, publicKey: true },
-        });
+      const prekeys = await tx.oneTimePrekey.findMany({
+        where: {
+          deviceId: { in: deviceIds },
+          consumedAt: null,
+        },
+        orderBy: { createdAt: 'asc' },
+        select: { id: true, deviceId: true, keyId: true, publicKey: true },
+      });
 
-        if (oneTimePrekey) {
-          await tx.oneTimePrekey.update({
-            where: { id: oneTimePrekey.id },
-            data: { consumedAt: new Date() },
-          });
+      // Take the oldest unconsumed prekey per device
+      const prekeyByDevice = new Map<string, typeof prekeys[0]>();
+      for (const prekey of prekeys) {
+        if (!prekeyByDevice.has(prekey.deviceId)) {
+          prekeyByDevice.set(prekey.deviceId, prekey);
         }
+      }
 
-        bundles.push({
+      if (prekeyByDevice.size > 0) {
+        await tx.oneTimePrekey.updateMany({
+          where: {
+            id: {
+              in: Array.from(prekeyByDevice.values()).map((p) => p.id),
+            },
+          },
+          data: { consumedAt: new Date() },
+        });
+      }
+
+      const bundles = devices.map((device) => {
+        const oneTimePrekey = prekeyByDevice.get(device.id) ?? null;
+        return {
           deviceId: device.id,
           userId: device.userId,
           platform: device.platform,
           identityPublicKey: device.identityPublicKey,
           signedPrekey: device.signedPrekeys[0] ?? null,
           oneTimePrekey: oneTimePrekey
-            ? {
-                keyId: oneTimePrekey.keyId,
-                publicKey: oneTimePrekey.publicKey,
-              }
+            ? { keyId: oneTimePrekey.keyId, publicKey: oneTimePrekey.publicKey }
             : null,
-        });
-      }
+        };
+      });
 
       return { userId, devices: bundles };
     });
   }
 
   async syncContacts(phoneHashes: string[]) {
+    const MAX_BATCH = 1000;
+    if (phoneHashes.length > MAX_BATCH) {
+      throw new BadRequestException(`Contact batch too large. Max ${MAX_BATCH} allowed.`);
+    }
     return this.prisma.user.findMany({
       where: {
         phoneHash: { in: phoneHashes },
@@ -121,7 +123,7 @@ export class UsersService {
       data: {
         ...(dto.username !== undefined && { username: dto.username }),
         ...(dto.profileAvatarUrl !== undefined && { profileAvatarUrl: dto.profileAvatarUrl }),
-        ...(dto.encryptedProfile !== undefined && { encryptedProfile: dto.encryptedProfile }),
+        ...(dto.encryptedProfile !== undefined && { encryptedProfile: dto.encryptedProfile as Prisma.InputJsonValue }),
         ...(dto.profileKeyHash !== undefined && { profileKeyHash: dto.profileKeyHash }),
       },
       select: {

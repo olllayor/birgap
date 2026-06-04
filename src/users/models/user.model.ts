@@ -40,20 +40,20 @@ export const GraphQLJSON = new GraphQLScalarType({
 @ObjectType('User')
 export class UserType {
   @Field(() => ID)
-  id: string;
+  id!: string;
 
   @Field(() => String, { nullable: true })
-  username: string | null;
+  username!: string | null;
 
   @Field(() => String, { nullable: true })
-  profileAvatarUrl: string | null;
+  profileAvatarUrl!: string | null;
 
   @Field(() => GraphQLJSON, { nullable: true })
-  encryptedProfile: unknown | null;
+  encryptedProfile!: unknown | null;
 
   @Field(() => String, { nullable: true })
-  profileKeyHash: string | null;
+  profileKeyHash!: string | null;
 
   @Field(() => Date)
-  createdAt: Date;
+  createdAt!: Date;
 }

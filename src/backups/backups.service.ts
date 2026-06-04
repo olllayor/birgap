@@ -1,8 +1,11 @@
 import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { InjectQueue } from '@nestjs/bullmq';
+import { Queue } from 'bullmq';
 import { PrismaService } from '../prisma/prisma.service';
 import { R2Service } from '../storage/r2.service';
 import { PutBackupDto } from './dto/put-backup.dto';
 import { UploadUrlDto } from './dto/upload-url.dto';
+import { StorageCleanupJobData } from './queue/storage-cleanup-job.interface';
 
 @Injectable()
 export class BackupsService {
@@ -11,6 +14,8 @@ export class BackupsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly r2: R2Service,
+    @InjectQueue('storage-cleanup')
+    private readonly cleanupQueue: Queue<StorageCleanupJobData>,
   ) {}
 
   async getUploadUrl(userId: string, dto: UploadUrlDto) {
@@ -51,8 +56,8 @@ export class BackupsService {
     });
 
     if (existing && existing.bucketKey !== dto.bucketKey) {
-      this.r2.deleteObject(existing.bucketKey).catch((error) => {
-        this.logger.warn(`Failed to delete old backup object ${existing.bucketKey}: ${error.message}`);
+      await this.cleanupQueue.add('delete-old-backup', {
+        bucketKey: existing.bucketKey,
       });
     }
 

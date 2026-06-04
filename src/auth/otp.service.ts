@@ -5,20 +5,22 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { InjectQueue } from '@nestjs/bullmq';
+import { Queue } from 'bullmq';
 import { PrismaService } from '../prisma/prisma.service';
 import { OtpStatus } from '@prisma/client';
-import { SmsService, SMS_SERVICE_TOKEN } from '../sms/sms.module';
 import { Inject } from '@nestjs/common';
-import { sha256, normalizePhone } from '../common/utils/crypto.util';
+import { sha256, normalizePhone, randomDigits } from '../common/utils/crypto.util';
 import { timingSafeEqual } from 'crypto';
+import { SmsOtpJobData } from '../sms/queue/sms-otp-job.interface';
 
 @Injectable()
 export class OtpService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
-    @Inject(SMS_SERVICE_TOKEN)
-    private readonly smsService: SmsService,
+    @InjectQueue('sms-otp')
+    private readonly smsQueue: Queue<SmsOtpJobData>,
   ) {}
 
   async requestOtp(phone: string) {
@@ -61,15 +63,11 @@ export class OtpService {
       },
     });
 
-    const sendResult = await this.smsService.sendOtp({
+    await this.smsQueue.add('send-otp', {
       phoneHash,
       phone: normalizedPhone,
       code,
     });
-
-    if (!sendResult.success) {
-      throw new BadRequestException('Failed to send OTP. Please try again.');
-    }
 
     return {
       success: true,
@@ -83,20 +81,20 @@ export class OtpService {
     const phoneHash = sha256(normalizedPhone);
     const maxAttempts = this.config.get<number>('OTP_MAX_ATTEMPTS') ?? 5;
     const lockoutSeconds = this.config.get<number>('OTP_LOCKOUT_SECONDS') ?? 900;
+    const lockoutThreshold = new Date(Date.now() - lockoutSeconds * 1000);
 
-    const recentFailed = await this.prisma.otp.findFirst({
+    // Phone-wide lockout: aggregate failed attempts across every OTP for this
+    // phone within the lockout window so users can't reset their attempt
+    // counter by requesting a fresh OTP after exhausting the previous one.
+    const recentAttempts = await this.prisma.otp.aggregate({
       where: {
         phoneHash,
-        status: OtpStatus.UNUSED,
-        attempts: { gte: maxAttempts },
-        createdAt: {
-          gt: new Date(Date.now() - lockoutSeconds * 1000),
-        },
+        createdAt: { gt: lockoutThreshold },
       },
-      orderBy: { createdAt: 'desc' },
+      _sum: { attempts: true },
     });
-
-    if (recentFailed) {
+    const totalAttempts = recentAttempts._sum.attempts ?? 0;
+    if (totalAttempts >= maxAttempts) {
       throw new ForbiddenException(
         'Too many failed attempts. Please try again later.',
       );
@@ -106,9 +104,6 @@ export class OtpService {
       where: {
         phoneHash,
         status: OtpStatus.UNUSED,
-        expiresAt: {
-          gt: new Date(),
-        },
       },
       orderBy: { createdAt: 'desc' },
     });
@@ -117,10 +112,8 @@ export class OtpService {
       throw new NotFoundException('Invalid or expired OTP');
     }
 
-    if (otp.attempts >= maxAttempts) {
-      throw new ForbiddenException(
-        'Too many failed attempts. Please try again later.',
-      );
+    if (otp.expiresAt <= new Date()) {
+      throw new NotFoundException('Invalid or expired OTP');
     }
 
     const expectedCode = otp.code.padStart(6, '0');
@@ -134,7 +127,7 @@ export class OtpService {
         data: { attempts: newAttempts },
       });
 
-      if (newAttempts >= maxAttempts) {
+      if (totalAttempts + 1 >= maxAttempts) {
         throw new ForbiddenException(
           'Too many failed attempts. Please try again later.',
         );
@@ -156,7 +149,7 @@ export class OtpService {
     if (mockCode) {
       return mockCode;
     }
-    return String(Math.floor(100000 + Math.random() * 900000));
+    return randomDigits(6);
   }
 
   private timingSafeCompare(a: string, b: string): boolean {

@@ -8,7 +8,6 @@ export class DirectThreadsService {
   async findById(id: string) {
     const thread = await this.prisma.directThread.findUnique({
       where: { id },
-      include: { messages: { orderBy: { threadSequence: 'asc' } } },
     });
     if (!thread) {
       throw new NotFoundException('DirectThread not found');
@@ -22,7 +21,6 @@ export class DirectThreadsService {
         OR: [{ userAId: userId }, { userBId: userId }],
       },
       orderBy: { updatedAt: 'desc' },
-      include: { messages: { orderBy: { threadSequence: 'asc' } } },
     });
   }
 }

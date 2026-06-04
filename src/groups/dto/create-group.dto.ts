@@ -9,5 +9,5 @@ export class CreateGroupDto {
   @ApiProperty({ description: 'Initial group member user IDs.' })
   @IsArray()
   @IsUUID('all', { each: true })
-  members: string[];
+  members!: string[];
 }

@@ -13,7 +13,7 @@ export class DevicesService {
   async register(userId: string, dto: RegisterDeviceDto) {
     const maxActiveDevices = this.config.get<number>('MAX_ACTIVE_DEVICES') ?? 3;
 
-    return this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       if (dto.deviceId) {
         const existing = await tx.device.findUnique({ where: { id: dto.deviceId } });
         if (existing && existing.userId !== userId) {
@@ -55,10 +55,11 @@ export class DevicesService {
         },
       });
     });
+
+    return result;
   }
 
   async list(userId: string) {
-    console.log('here i am ');
     return this.prisma.device.findMany({
       where: { userId, active: true },
       orderBy: { createdAt: 'asc' },

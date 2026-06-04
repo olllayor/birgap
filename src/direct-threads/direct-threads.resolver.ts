@@ -1,9 +1,10 @@
 import { ForbiddenException, UseGuards } from '@nestjs/common';
-import { Args, ID, Parent, Query, ResolveField, Resolver } from '@nestjs/graphql';
+import { Args, ID, Int, Parent, Query, ResolveField, Resolver } from '@nestjs/graphql';
 import { GqlAuthGuard } from '../common/guards/gql-auth.guard';
 import { CurrentGqlUser } from '../common/decorators/gql-current-user.decorator';
 import { AuthenticatedUser } from '../common/types/authenticated-user';
 import { UserLoader } from '../common/loaders/user.loader';
+import { PrismaService } from '../prisma/prisma.service';
 import { DirectThreadsService } from './direct-threads.service';
 import { DirectThreadType } from './models/direct-thread.model';
 import { MessageType } from '../messages/models/message.model';
@@ -14,6 +15,7 @@ export class DirectThreadsResolver {
   constructor(
     private readonly directThreadsService: DirectThreadsService,
     private readonly userLoader: UserLoader,
+    private readonly prisma: PrismaService,
   ) {}
 
   @Query(() => DirectThreadType, { nullable: true })
@@ -50,7 +52,34 @@ export class DirectThreadsResolver {
   }
 
   @ResolveField('messages', () => [MessageType])
-  messages(@Parent() thread: DirectThreadType) {
-    return thread.messages;
+  async messages(
+    @Parent() thread: DirectThreadType,
+    @Args('limit', { nullable: true, type: () => Int }) limit?: number,
+    @Args('beforeSequence', { nullable: true, type: () => Int }) beforeSequence?: number,
+    @Args('afterSequence', { nullable: true, type: () => Int }) afterSequence?: number,
+  ) {
+    const take = Math.min(limit ?? 50, 100);
+    const messages = await this.prisma.message.findMany({
+      where: {
+        threadId: thread.id,
+        ...(beforeSequence !== undefined && { threadSequence: { lt: beforeSequence } }),
+        ...(afterSequence !== undefined && { threadSequence: { gt: afterSequence } }),
+      },
+      orderBy: { threadSequence: 'desc' },
+      take,
+      select: {
+        id: true,
+        threadId: true,
+        groupId: true,
+        senderUserId: true,
+        senderDeviceId: true,
+        threadSequence: true,
+        replyToMessageId: true,
+        createdAt: true,
+        deletedAt: true,
+        editedAt: true,
+      },
+    });
+    return messages.reverse();
   }
 }

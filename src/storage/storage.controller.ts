@@ -30,8 +30,9 @@ export class StorageController {
         dto.purpose,
       );
       return result;
-    } catch (error: any) {
-      throw new BadRequestException(error.message || 'Failed to generate presigned upload URL');
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Failed to generate presigned upload URL';
+      throw new BadRequestException(message);
     }
   }
 }

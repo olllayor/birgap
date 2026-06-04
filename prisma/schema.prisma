@@ -45,6 +45,19 @@ enum EnvelopeStatus {
   READ
 }
 
+enum MediaType {
+  IMAGE
+  VIDEO
+  AUDIO
+  DOCUMENT
+}
+
+enum UploadStatus {
+  PENDING
+  COMPLETE
+  FAILED
+}
+
 model User {
   id          String     @id @default(uuid()) @db.Uuid
   phoneHash   String     @unique
@@ -65,6 +78,8 @@ model User {
   threadsAsUserB  DirectThread[]   @relation("ThreadUserB")
   backups         BackupBlob[]
   groupMembers    GroupMember[]
+  reactions       MessageReaction[]
+  media           MessageMedia[]
 }
 
 model Device {
@@ -136,26 +151,63 @@ model DirectThread {
 }
 
 model Message {
-  id             String   @id @default(uuid()) @db.Uuid
-  threadId       String?  @db.Uuid
-  groupId        String?  @db.Uuid
-  senderUserId   String   @db.Uuid
-  senderDeviceId String   @db.Uuid
-  idempotencyKey String
-  threadSequence Int
-  createdAt      DateTime @default(now())
+  id                   String    @id @default(uuid()) @db.Uuid
+  threadId             String?   @db.Uuid
+  groupId              String?   @db.Uuid
+  senderUserId         String    @db.Uuid
+  senderDeviceId       String    @db.Uuid
+  idempotencyKey       String
+  threadSequence       Int
+  replyToMessageId     String?   @db.Uuid
+  createdAt            DateTime  @default(now())
+  deletedAt            DateTime?
+  editedAt             DateTime?
+  lastEditIdempotencyKey String?
 
   thread       DirectThread?    @relation(fields: [threadId], references: [id], onDelete: Cascade)
   group        Group?           @relation(fields: [groupId], references: [id], onDelete: Cascade)
   sender       User             @relation("SentMessages", fields: [senderUserId], references: [id], onDelete: Cascade)
   senderDevice Device           @relation("SenderDeviceMessages", fields: [senderDeviceId], references: [id], onDelete: Restrict)
+  replyTo      Message?         @relation("MessageReplies", fields: [replyToMessageId], references: [id], onDelete: SetNull)
+  replies      Message[]        @relation("MessageReplies")
   envelopes    MessageEnvelope[]
+  reactions    MessageReaction[]
+  adminDeletes MessageAdminDeleteLog[]
+  media        MessageMedia[]
 
   @@unique([senderDeviceId, idempotencyKey])
   @@unique([threadId, threadSequence])
   @@unique([groupId, threadSequence])
-  @@index([threadId, threadSequence])
-  @@index([groupId, threadSequence])
+  @@index([replyToMessageId])
+}
+
+model MessageMedia {
+  id                      String       @id @default(uuid()) @db.Uuid
+  userId                  String       @db.Uuid
+  messageId               String?      @db.Uuid
+  mediaType               MediaType
+  bucketKey               String       @unique
+  mimeType                String
+  sizeBytes               Int
+  filename                String
+  thumbnailBucketKey      String?
+  width                   Int?
+  height                  Int?
+  duration                Int?
+  mediaCiphertextHash     String
+  thumbnailCiphertextHash String?
+  uploadStatus            UploadStatus @default(PENDING)
+  uploadedAt              DateTime?
+  uploadSessionId         String?      @unique @db.Uuid
+  createdAt               DateTime     @default(now())
+
+  user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  message Message? @relation(fields: [messageId], references: [id], onDelete: SetNull)
+
+  @@index([userId, uploadStatus])
+  @@index([messageId])
+  @@index([bucketKey])
+  @@index([uploadStatus, createdAt])
 }
 
 model MessageEnvelope {
@@ -168,13 +220,17 @@ model MessageEnvelope {
   deliveredAt       DateTime?
   readAt            DateTime?
   envelopeSequence  BigInt         @default(autoincrement())
+  envelopeVersion   Int            @default(1)
   createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
 
   message         Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
   recipientDevice Device  @relation("RecipientDeviceEnvelopes", fields: [recipientDeviceId], references: [id], onDelete: Restrict)
 
   @@unique([messageId, recipientDeviceId])
   @@index([recipientDeviceId, status, envelopeSequence])
+  @@index([recipientDeviceId, updatedAt])
+  @@index([recipientUserId, status])
 }
 
 model RefreshToken {
@@ -228,6 +284,7 @@ model Otp {
   createdAt DateTime  @default(now())
 
   @@index([phoneHash, status, expiresAt])
+  @@index([phoneHash, status, createdAt])
 }
 
 model SmsReport {
@@ -262,4 +319,49 @@ model GroupMember {
 
   @@id([groupId, userId])
   @@index([userId])
+}
+
+model UnreadCounter {
+  userId     String   @db.Uuid
+  threadType String
+  threadId   String   @db.Uuid
+  count      Int      @default(0)
+  updatedAt  DateTime @updatedAt
+
+  @@id([userId, threadType, threadId])
+  @@index([userId])
+}
+
+model HiddenMessage {
+  userId    String   @db.Uuid
+  messageId String   @db.Uuid
+  createdAt DateTime @default(now())
+
+  @@id([userId, messageId])
+}
+
+model MessageAdminDeleteLog {
+  id          String   @id @default(uuid()) @db.Uuid
+  messageId   String   @db.Uuid
+  adminUserId String   @db.Uuid
+  deletedAt   DateTime @default(now())
+
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@index([messageId])
+  @@index([adminUserId])
+}
+
+model MessageReaction {
+  id        String   @id @default(uuid()) @db.Uuid
+  messageId String   @db.Uuid
+  userId    String   @db.Uuid
+  emoji     String   @db.VarChar(16)
+  createdAt DateTime @default(now())
+
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, messageId])
+  @@index([messageId])
 }

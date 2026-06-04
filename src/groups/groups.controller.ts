@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
@@ -6,6 +6,7 @@ import { AuthenticatedUser } from '../common/types/authenticated-user';
 import { GroupsService } from './groups.service';
 import { CreateGroupDto } from './dto/create-group.dto';
 import { SendGroupMessageDto } from './dto/send-group-message.dto';
+import { EditGroupMessageDto } from './dto/edit-group-message.dto';
 
 @ApiTags('groups')
 @ApiBearerAuth()
@@ -44,5 +45,15 @@ export class GroupsController {
     @Body() dto: SendGroupMessageDto,
   ) {
     return this.groupsService.queueGroupMessage(user.userId, groupId, dto);
+  }
+
+  @Patch(':id/messages/:messageId')
+  editGroupMessage(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') groupId: string,
+    @Param('messageId') messageId: string,
+    @Body() dto: EditGroupMessageDto,
+  ) {
+    return this.groupsService.editGroupMessage(user.userId, groupId, messageId, dto);
   }
 }

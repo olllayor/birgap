@@ -5,17 +5,17 @@ import { GroupMemberType } from './group-member.model';
 @ObjectType('Group')
 export class GroupType {
   @Field(() => ID)
-  id: string;
+  id!: string;
 
   @Field(() => [GroupMemberType])
-  members: GroupMemberType[];
+  members!: GroupMemberType[];
 
   @Field(() => [MessageType])
-  messages: MessageType[];
+  messages!: MessageType[];
 
   @Field()
-  createdAt: Date;
+  createdAt!: Date;
 
   @Field()
-  updatedAt: Date;
+  updatedAt!: Date;
 }

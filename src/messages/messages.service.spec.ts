@@ -1,5 +1,29 @@
 import { EventEmitter2 } from '@nestjs/event-emitter';
+import { ConfigService } from '@nestjs/config';
+import { PrismaService } from '../prisma/prisma.service';
+import { UnreadService } from '../unread/unread.service';
 import { MessagesService } from './messages.service';
+import { MediaService } from './media.service';
+import { DeleteMessageScope } from './dto/delete-message.dto';
+
+const mockUnreadService = {
+  enqueueRecalc: jest.fn().mockResolvedValue(undefined),
+  getCounts: jest.fn().mockResolvedValue([]),
+} as unknown as UnreadService;
+
+const mockConfigService = {
+  get: jest.fn().mockImplementation((key: string, defaultValue: unknown) => defaultValue),
+} as unknown as ConfigService;
+
+const mockPushService = {
+  sendEditWakeup: jest.fn().mockResolvedValue(undefined),
+  sendDeleteWakeup: jest.fn().mockResolvedValue(undefined),
+} as unknown as import('../push/push.service').PushService;
+
+const mockMediaService = {
+  assertAttachmentsOwned: jest.fn().mockResolvedValue([]),
+  cleanupMessageMedia: jest.fn().mockResolvedValue(undefined),
+} as unknown as MediaService;
 
 describe('MessagesService', () => {
   it('returns existing message for duplicate idempotency key', async () => {
@@ -18,7 +42,7 @@ describe('MessagesService', () => {
       },
     };
     const events = { emit: jest.fn() } as unknown as EventEmitter2;
-    const service = new MessagesService(prisma as any, events);
+    const service = new MessagesService(prisma as unknown as PrismaService, events, mockUnreadService, mockConfigService, mockPushService, mockMediaService);
 
     await expect(
       service.send('user-1', {
@@ -32,6 +56,150 @@ describe('MessagesService', () => {
       threadSequence: 7,
     });
     expect(events.emit).not.toHaveBeenCalled();
+  });
+
+  describe('send', () => {
+    const makeTx = () => ({
+      device: {
+        findMany: jest.fn().mockResolvedValue([
+          { id: 'device-1', userId: 'user-1' },
+          { id: 'device-2', userId: 'user-2' },
+        ]),
+      },
+      directThread: {
+        upsert: jest.fn().mockResolvedValue({ id: 'thread-1' }),
+        update: jest.fn().mockResolvedValue({ id: 'thread-1', latestSequence: 8 }),
+      },
+      message: {
+        create: jest.fn().mockResolvedValue({
+          id: 'message-1',
+          threadId: 'thread-1',
+          senderUserId: 'user-1',
+          senderDeviceId: 'device-1',
+          threadSequence: 8,
+          createdAt: new Date(),
+          envelopes: [{ id: 'envelope-1' }],
+        }),
+      },
+    });
+
+    const makePrisma = (tx: ReturnType<typeof makeTx>) => ({
+      message: { findUnique: jest.fn().mockResolvedValue(null) },
+      $transaction: jest.fn((callback: (tx: ReturnType<typeof makeTx>) => unknown) => callback(tx)),
+    });
+
+    it('creates message with single combined device query', async () => {
+      const tx = makeTx();
+      const prisma = makePrisma(tx);
+      const events = { emit: jest.fn() } as unknown as EventEmitter2;
+      const service = new MessagesService(prisma as unknown as PrismaService, events, mockUnreadService, mockConfigService, mockPushService, mockMediaService);
+
+      const result = await service.send('user-1', {
+        senderDeviceId: 'device-1',
+        recipientUserId: 'user-2',
+        idempotencyKey: 'idem-1',
+        envelopes: [{ recipientDeviceId: 'device-2', ciphertext: { body: 'enc' } }],
+      });
+
+      expect(result.id).toBe('message-1');
+      expect(tx.device.findMany).toHaveBeenCalledWith({
+        where: {
+          active: true,
+          OR: [
+            { id: 'device-1' },
+            { userId: 'user-2' },
+            { userId: 'user-1', id: { not: 'device-1' } },
+          ],
+        },
+        select: { id: true, userId: true },
+      });
+      expect(events.emit).toHaveBeenCalledWith('message.created', expect.anything());
+    });
+
+    it('binds mediaIds to the new message in the same transaction', async () => {
+      const updateMany = jest.fn().mockResolvedValue({ count: 2 });
+      const tx = {
+        ...makeTx(),
+        messageMedia: {
+          updateMany,
+        },
+      };
+      const prisma = {
+        message: { findUnique: jest.fn().mockResolvedValue(null) },
+        $transaction: jest.fn((callback: (tx: unknown) => unknown) => callback(tx)),
+      };
+      const events = { emit: jest.fn() } as unknown as EventEmitter2;
+      const mediaService = {
+        assertAttachmentsOwned: jest.fn().mockResolvedValue([
+          { id: 'media-1', userId: 'user-1', messageId: null, uploadStatus: 'COMPLETE' },
+          { id: 'media-2', userId: 'user-1', messageId: null, uploadStatus: 'COMPLETE' },
+        ]),
+        cleanupMessageMedia: jest.fn(),
+      } as unknown as MediaService;
+      const service = new MessagesService(
+        prisma as unknown as PrismaService,
+        events,
+        mockUnreadService,
+        mockConfigService,
+        mockPushService,
+        mediaService,
+      );
+
+      await service.send('user-1', {
+        senderDeviceId: 'device-1',
+        recipientUserId: 'user-2',
+        idempotencyKey: 'idem-media',
+        mediaIds: ['media-1', 'media-2'],
+        envelopes: [{ recipientDeviceId: 'device-2', ciphertext: { body: 'enc' } }],
+      });
+
+      expect(mediaService.assertAttachmentsOwned).toHaveBeenCalledWith(
+        'user-1',
+        ['media-1', 'media-2'],
+        tx,
+      );
+      expect(updateMany).toHaveBeenCalledWith({
+        where: { id: { in: ['media-1', 'media-2'] }, userId: 'user-1', messageId: null },
+        data: { messageId: 'message-1' },
+      });
+    });
+
+    it('rolls back message creation when mediaIds are invalid', async () => {
+      const tx = makeTx();
+      const prisma = {
+        message: { findUnique: jest.fn().mockResolvedValue(null) },
+        $transaction: jest.fn((callback: (tx: ReturnType<typeof makeTx>) => unknown) =>
+          callback(tx),
+        ),
+      };
+      const events = { emit: jest.fn() } as unknown as EventEmitter2;
+      const mediaService = {
+        assertAttachmentsOwned: jest
+          .fn()
+          .mockRejectedValue(new Error('One or more mediaIds do not exist')),
+        cleanupMessageMedia: jest.fn(),
+      } as unknown as MediaService;
+      const service = new MessagesService(
+        prisma as unknown as PrismaService,
+        events,
+        mockUnreadService,
+        mockConfigService,
+        mockPushService,
+        mediaService,
+      );
+
+      await expect(
+        service.send('user-1', {
+          senderDeviceId: 'device-1',
+          recipientUserId: 'user-2',
+          idempotencyKey: 'idem-bad-media',
+          mediaIds: ['media-bogus'],
+          envelopes: [{ recipientDeviceId: 'device-2', ciphertext: { body: 'enc' } }],
+        }),
+      ).rejects.toThrow('One or more mediaIds do not exist');
+      expect(tx.message.create).not.toHaveBeenCalled();
+      expect(events.emit).not.toHaveBeenCalled();
+    });
   });
 
   describe('getPending', () => {
@@ -55,7 +223,7 @@ describe('MessagesService', () => {
       const envelopes = Array.from({ length: 50 }, (_, i) => makeEnvelope(BigInt(i + 1)));
       const prisma = makePrisma(envelopes);
       const events = { emit: jest.fn() } as unknown as EventEmitter2;
-      const service = new MessagesService(prisma as any, events);
+      const service = new MessagesService(prisma as unknown as PrismaService, events, mockUnreadService, mockConfigService, mockPushService, mockMediaService);
 
       const result = await service.getPending('user-1', 'device-1', undefined, 50);
 
@@ -70,7 +238,7 @@ describe('MessagesService', () => {
       const envelopes = [makeEnvelope(1n), makeEnvelope(2n)];
       const prisma = makePrisma(envelopes);
       const events = { emit: jest.fn() } as unknown as EventEmitter2;
-      const service = new MessagesService(prisma as any, events);
+      const service = new MessagesService(prisma as unknown as PrismaService, events, mockUnreadService, mockConfigService, mockPushService, mockMediaService);
 
       const result = await service.getPending('user-1', 'device-1', undefined, 50);
 
@@ -81,7 +249,7 @@ describe('MessagesService', () => {
     it('returns hasMore false for empty result set', async () => {
       const prisma = makePrisma([]);
       const events = { emit: jest.fn() } as unknown as EventEmitter2;
-      const service = new MessagesService(prisma as any, events);
+      const service = new MessagesService(prisma as unknown as PrismaService, events, mockUnreadService, mockConfigService, mockPushService, mockMediaService);
 
       const result = await service.getPending('user-1', 'device-1', undefined, 50);
 
@@ -92,7 +260,7 @@ describe('MessagesService', () => {
     it('uses after cursor to filter envelopes', async () => {
       const prisma = makePrisma([makeEnvelope(51n), makeEnvelope(52n)]);
       const events = { emit: jest.fn() } as unknown as EventEmitter2;
-      const service = new MessagesService(prisma as any, events);
+      const service = new MessagesService(prisma as unknown as PrismaService, events, mockUnreadService, mockConfigService, mockPushService, mockMediaService);
 
       await service.getPending('user-1', 'device-1', '50', 50);
 
@@ -108,7 +276,7 @@ describe('MessagesService', () => {
     it('orders by envelopeSequence ascending', async () => {
       const prisma = makePrisma([]);
       const events = { emit: jest.fn() } as unknown as EventEmitter2;
-      const service = new MessagesService(prisma as any, events);
+      const service = new MessagesService(prisma as unknown as PrismaService, events, mockUnreadService, mockConfigService, mockPushService, mockMediaService);
 
       await service.getPending('user-1', 'device-1', undefined, 50);
 
@@ -122,12 +290,155 @@ describe('MessagesService', () => {
     it('defaults limit to 50', async () => {
       const prisma = makePrisma([]);
       const events = { emit: jest.fn() } as unknown as EventEmitter2;
-      const service = new MessagesService(prisma as any, events);
+      const service = new MessagesService(prisma as unknown as PrismaService, events, mockUnreadService, mockConfigService, mockPushService, mockMediaService);
 
       await service.getPending('user-1', 'device-1');
 
       expect(prisma.messageEnvelope.findMany).toHaveBeenCalledWith(
         expect.objectContaining({ take: 50 }),
+      );
+    });
+  });
+
+  describe('sync', () => {
+    const makePrisma = (envelopes: unknown[], deletedMessages: unknown[] = []) => ({
+      device: {
+        findFirst: jest.fn().mockResolvedValue({ id: 'device-1', userId: 'user-1', active: true }),
+      },
+      messageEnvelope: {
+        findMany: jest.fn().mockResolvedValue(envelopes),
+      },
+      message: {
+        findMany: jest.fn().mockResolvedValue(deletedMessages),
+      },
+    });
+
+    it('returns requiresFullReload when since is older than 14 days', async () => {
+      const prisma = makePrisma([]);
+      const events = { emit: jest.fn() } as unknown as EventEmitter2;
+      const service = new MessagesService(prisma as unknown as PrismaService, events, mockUnreadService, mockConfigService, mockPushService, mockMediaService);
+
+      const oldSince = new Date(Date.now() - 15 * 24 * 60 * 60 * 1000).toISOString();
+      const result = await service.sync('user-1', 'device-1', oldSince);
+
+      expect(result.requiresFullReload).toBe(true);
+      expect(result.envelopes).toHaveLength(0);
+      expect(result.deletedMessages).toHaveLength(0);
+      expect(prisma.messageEnvelope.findMany).not.toHaveBeenCalled();
+    });
+
+    it('returns envelopes and deletedMessages within window', async () => {
+      const envelopes = [
+        {
+          id: 'env-1',
+          messageId: 'msg-1',
+          recipientUserId: 'user-1',
+          recipientDeviceId: 'device-1',
+          ciphertext: { body: 'enc' },
+          status: 'PENDING',
+          envelopeVersion: 2,
+          updatedAt: new Date(),
+          message: {
+            id: 'msg-1',
+            threadId: 'thread-1',
+            groupId: null,
+            senderUserId: 'user-2',
+            senderDeviceId: 'device-2',
+            threadSequence: 1,
+            replyToMessageId: null,
+            createdAt: new Date(),
+            deletedAt: null,
+            editedAt: new Date(),
+          },
+        },
+      ];
+      const deletedMessages = [
+        { id: 'msg-2', threadId: 'thread-1', groupId: null, deletedAt: new Date() },
+      ];
+      const prisma = makePrisma(envelopes, deletedMessages);
+      const events = { emit: jest.fn() } as unknown as EventEmitter2;
+      const service = new MessagesService(prisma as unknown as PrismaService, events, mockUnreadService, mockConfigService, mockPushService, mockMediaService);
+
+      const recentSince = new Date(Date.now() - 1 * 60 * 60 * 1000).toISOString();
+      const result = await service.sync('user-1', 'device-1', recentSince);
+
+      expect(result.requiresFullReload).toBe(false);
+      expect(result.envelopes).toHaveLength(1);
+      expect(result.envelopes[0].isEdit).toBe(true);
+      expect(result.deletedMessages).toHaveLength(1);
+      expect(result.hasMore).toBe(false);
+    });
+
+    it('caps limit at 500', async () => {
+      const prisma = makePrisma([]);
+      const events = { emit: jest.fn() } as unknown as EventEmitter2;
+      const service = new MessagesService(prisma as unknown as PrismaService, events, mockUnreadService, mockConfigService, mockPushService, mockMediaService);
+
+      const recentSince = new Date(Date.now() - 1 * 60 * 60 * 1000).toISOString();
+      await service.sync('user-1', 'device-1', recentSince, 1000);
+
+      expect(prisma.messageEnvelope.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ take: 501 }),
+      );
+    });
+  });
+
+  describe('delete (FOR_EVERYONE)', () => {
+    const buildAdminDeletePrisma = () => {
+      const message = {
+        id: 'message-1',
+        threadId: null,
+        groupId: 'group-1',
+        senderUserId: 'author-user',
+        createdAt: new Date(),
+        deletedAt: null,
+        thread: null,
+      };
+      const tombstoned = {
+        ...message,
+        deletedAt: new Date('2026-05-16T10:00:00.000Z'),
+        thread: null,
+        envelopes: [],
+      };
+      const tx = {
+        message: { update: jest.fn().mockResolvedValue(tombstoned) },
+        messageAdminDeleteLog: { create: jest.fn().mockResolvedValue({}) },
+      };
+      const prisma = {
+        device: { findFirst: jest.fn().mockResolvedValue({ id: 'admin-device', userId: 'admin-user', active: true }) },
+        message: { findUnique: jest.fn().mockResolvedValue(message) },
+        groupMember: { findUnique: jest.fn().mockResolvedValue({ role: 'ADMIN' }) },
+        $transaction: jest.fn((callback: (tx: unknown) => unknown) => callback(tx)),
+      };
+      return { prisma, tx, message, tombstoned };
+    };
+
+    it('emits message.deleted.group with deletedByUserId set to the admin actor, not the message author', async () => {
+      const { prisma } = buildAdminDeletePrisma();
+      const events = { emit: jest.fn() } as unknown as EventEmitter2;
+      const service = new MessagesService(
+        prisma as unknown as PrismaService,
+        events,
+        mockUnreadService,
+        mockConfigService,
+        mockPushService,
+        mockMediaService,
+      );
+
+      await service.delete('admin-user', 'message-1', {
+        deviceId: 'admin-device',
+        scope: DeleteMessageScope.FOR_EVERYONE,
+      });
+
+      expect(events.emit).toHaveBeenCalledWith(
+        'message.deleted.group',
+        expect.objectContaining({
+          messageId: 'message-1',
+          groupId: 'group-1',
+          senderUserId: 'author-user',
+          deletedBy: 'ADMIN',
+          deletedByUserId: 'admin-user',
+        }),
       );
     });
   });

@@ -461,6 +461,8 @@ POST /messages
   "senderDeviceId": "sender-device-uuid",
   "recipientUserId": "recipient-user-uuid",
   "idempotencyKey": "client-generated-unique-key",
+  "replyToMessageId": "message-uuid (optional)",
+  "mediaIds": ["media-uuid-1", "media-uuid-2"],
   "envelopes": [
     {
       "recipientDeviceId": "recipient-device-uuid",
@@ -491,7 +493,22 @@ POST /messages
   "senderUserId": "sender-user-uuid",
   "senderDeviceId": "sender-device-uuid",
   "threadSequence": 1,
+  "replyToMessageId": null,
   "createdAt": "2026-05-16T10:00:00.000Z",
+  "media": [
+    {
+      "id": "media-uuid-1",
+      "messageId": "message-uuid",
+      "mediaType": "IMAGE",
+      "mimeType": "image/jpeg",
+      "sizeBytes": 245678,
+      "filename": "photo.jpg",
+      "mediaCiphertextHash": "sha256...",
+      "uploadStatus": "COMPLETE",
+      "uploadedAt": "2026-05-16T09:59:55.000Z",
+      "createdAt": "2026-05-16T09:59:50.000Z"
+    }
+  ],
   "envelopes": [
     {
       "id": "envelope-uuid",
@@ -519,12 +536,133 @@ POST /messages
 - Envelopes for unrelated devices are rejected
 - Retrying with same idempotency key returns original message
 - Server assigns `threadSequence` for ordering
+- `mediaIds` is optional (max 10 attachments per message, default `MEDIA_MAX_ATTACHMENTS_PER_MESSAGE=10`)
+- Each `mediaId` must be owned by the sender, in `COMPLETE` status, and not yet bound to a message
 
 **Errors**:
 - 400: Missing envelope for recipient device
 - 400: Envelope device not part of conversation
+- 400: Too many attachments (exceeds `MEDIA_MAX_ATTACHMENTS_PER_MESSAGE`)
+- 400: One or more mediaIds are invalid, already attached, or not yet fully uploaded
 - 403: Sender device not active for user
 - 404: Recipient has no active devices
+
+---
+
+## Media Attachments
+
+The media flow has 3 steps per attachment: `init` → upload to R2 → `complete`. Attachments are bound to a message at `POST /messages` time (or `POST /groups/:id/envelopes`).
+
+### Init Media Upload
+
+Create a pending `MessageMedia` row and get a presigned R2 upload URL for the encrypted blob.
+
+```
+POST /messages/media/init
+```
+
+**Authentication**: Required (JWT)
+
+**Request Body**:
+```json
+{
+  "mediaType": "IMAGE",
+  "filename": "photo.jpg",
+  "mimeType": "image/jpeg",
+  "sizeBytes": 245678,
+  "mediaCiphertextHash": "sha256-of-encrypted-blob",
+  "width": 1920,
+  "height": 1080
+}
+```
+
+**Field constraints**:
+- `mediaType`: one of `IMAGE`, `VIDEO`, `AUDIO`, `DOCUMENT`
+- `sizeBytes`: 1 to 104857600 (100 MB)
+- `mediaCiphertextHash`: 1-256 chars, server never decrypts
+
+**Response** (201 Created):
+```json
+{
+  "mediaId": "media-uuid",
+  "uploadUrl": "https://r2.example.com/bucket/media/...?X-Amz-Signature=...",
+  "bucketKey": "media/{userId}/{uuid}.jpg"
+}
+```
+
+**Allowed mime types per `mediaType`**:
+| `mediaType` | Allowed `mimeType` |
+|---|---|
+| `IMAGE` | `image/jpeg`, `image/png`, `image/webp`, `image/gif` |
+| `VIDEO` | `video/mp4`, `video/quicktime` |
+| `AUDIO` | `audio/mpeg`, `audio/ogg`, `audio/aac`, `audio/mp4` |
+| `DOCUMENT` | `application/pdf`, `text/plain` |
+
+**Errors**:
+- 400: `sizeBytes` exceeds 100 MB
+- 400: `mimeType` not in the allowlist for the declared `mediaType`
+
+---
+
+### Complete Media Upload
+
+Verify the R2 PUT succeeded with the expected size and flip the row to `COMPLETE`. Required before binding to a message.
+
+```
+POST /messages/media/:mediaId/complete
+```
+
+**Authentication**: Required (JWT)
+
+**Request Body**:
+```json
+{
+  "sizeBytes": 245678
+}
+```
+
+**Response** (200 OK):
+```json
+{
+  "id": "media-uuid",
+  "bucketKey": "media/{userId}/{uuid}.jpg",
+  "mediaType": "IMAGE",
+  "mimeType": "image/jpeg",
+  "sizeBytes": 245678
+}
+```
+
+**Errors**:
+- 400: Media is already `COMPLETE` or `FAILED`
+- 400: Size mismatch — `HeadObject` returned a different `ContentLength` than `sizeBytes`
+- 403: Caller is not the owner of the media
+- 404: Media not found
+
+---
+
+### Get Media Download URL
+
+Get a short-lived presigned R2 GET URL for an attachment. Caller must be a thread participant or group member of the parent message.
+
+```
+GET /messages/media/:mediaId/download-url
+```
+
+**Authentication**: Required (JWT)
+
+**Response** (200 OK):
+```json
+{
+  "downloadUrl": "https://r2.example.com/bucket/media/...?X-Amz-Signature=...",
+  "expiresIn": 300
+}
+```
+
+**Errors**:
+- 400: Media is not yet attached to a message
+- 403: Media upload is not yet complete
+- 403: Caller cannot access the parent message (not a thread participant or group member)
+- 404: Media not found
 
 ---
 
@@ -637,6 +775,262 @@ POST /messages/:messageId/ack
 - `READ` automatically sets `deliveredAt` if not set
 - ACKs are per-device
 - Sender receives `message.ack` WebSocket event
+
+---
+
+### Delete Message
+
+Delete a message. Supports two scopes: `FOR_ME` (local hide) and `FOR_EVERYONE` (tombstone).
+
+```
+DELETE /messages/:messageId
+```
+
+**Authentication**: Required (JWT)
+
+**Request Body**:
+```json
+{
+  "deviceId": "current-device-uuid",
+  "scope": "FOR_ME"
+}
+```
+
+**Response** (200 OK):
+```json
+{
+  "success": true,
+  "scope": "FOR_ME"
+}
+```
+
+**Notes**:
+- `FOR_ME`: Creates a `HiddenMessage` record for the current user. No realtime broadcast.
+- `FOR_EVERYONE`: Sets `Message.deletedAt` tombstone. Emits `message.deleted` to all participants.
+- Only the original sender can delete for everyone in direct threads.
+- Group admins can delete any message in a group for everyone.
+- `FOR_EVERYONE` is time-limited to 48 hours by default (configurable via `MESSAGE_EDIT_DELETE_LIMIT_HOURS`).
+- After a tombstone, reactions and replies remain in the database; clients render a "Message deleted" placeholder.
+- Admin deletions are audited in `MessageAdminDeleteLog`.
+
+---
+
+### Edit Message
+
+Edit an existing direct message. Updates `Message.editedAt` and refreshes per-device envelope ciphertext.
+
+```
+PATCH /messages/:messageId
+```
+
+**Authentication**: Required (JWT)
+
+**Request Body**:
+```json
+{
+  "senderDeviceId": "sender-device-uuid",
+  "idempotencyKey": "client-generated-edit-key",
+  "envelopes": [
+    {
+      "recipientDeviceId": "recipient-device-uuid",
+      "ciphertext": {
+        "type": "signal-message",
+        "body": "base64-updated-ciphertext"
+      }
+    }
+  ]
+}
+```
+
+**Response** (200 OK):
+```json
+{
+  "id": "message-uuid",
+  "threadId": "thread-uuid",
+  "senderUserId": "sender-user-uuid",
+  "senderDeviceId": "sender-device-uuid",
+  "threadSequence": 1,
+  "editedAt": "2026-05-16T10:00:00.000Z",
+  "createdAt": "2026-05-16T09:00:00.000Z"
+}
+```
+
+**Notes**:
+- Only the original sender can edit a message.
+- Cannot edit a tombstoned (deleted) message.
+- Edits are time-limited to 48 hours by default.
+- `idempotencyKey` prevents duplicate edit fanouts on retries.
+- Envelope `envelopeVersion` is incremented on each edit; `updatedAt` is refreshed.
+- Emits `message.edited` to all thread participants.
+- Silent push wakeup is sent to offline clients so they can sync the edit.
+
+---
+
+### Sync Updated Messages
+
+Fetch message envelopes that have been edited or deleted since a given timestamp. Used for offline recovery when the client reconnects.
+
+```
+GET /messages/sync?deviceId=uuid&since=2026-05-16T10:00:00.000Z&limit=200
+```
+
+**Authentication**: Required (JWT)
+
+**Query Parameters**:
+| Parameter | Required | Default | Description |
+|-----------|----------|---------|-------------|
+| `deviceId` | Yes | - | Device UUID |
+| `since` | Yes | - | ISO 8601 timestamp |
+| `limit` | No | 200 | Max envelopes (max 500) |
+
+**Response** (200 OK):
+```json
+{
+  "requiresFullReload": false,
+  "envelopes": [
+    {
+      "id": "envelope-uuid",
+      "messageId": "message-uuid",
+      "recipientUserId": "user-uuid",
+      "recipientDeviceId": "device-uuid",
+      "ciphertext": { "type": "signal-message", "body": "base64-ciphertext" },
+      "status": "PENDING",
+      "envelopeVersion": 2,
+      "updatedAt": "2026-05-16T10:00:00.000Z",
+      "isEdit": true,
+      "message": {
+        "id": "message-uuid",
+        "threadId": "thread-uuid",
+        "groupId": null,
+        "senderUserId": "sender-uuid",
+        "senderDeviceId": "sender-device-uuid",
+        "threadSequence": 1,
+        "replyToMessageId": null,
+        "createdAt": "2026-05-16T09:00:00.000Z",
+        "deletedAt": null,
+        "editedAt": "2026-05-16T10:00:00.000Z"
+      }
+    }
+  ],
+  "deletedMessages": [
+    {
+      "messageId": "message-uuid",
+      "threadId": "thread-uuid",
+      "groupId": null,
+      "deletedAt": "2026-05-16T10:00:00.000Z"
+    }
+  ],
+  "hasMore": false
+}
+```
+
+**Notes**:
+- If `since` is older than 14 days, returns `{ "requiresFullReload": true }`. Client should reload threads via GraphQL.
+- `isEdit: true` when `envelopeVersion > 1` or the envelope was updated after the message was edited.
+- `deletedMessages` contains tombstoned messages in threads/groups the user participates in.
+- Call this endpoint after WebSocket reconnect or push wakeup.
+
+---
+
+## Reactions
+
+### Toggle Reaction
+
+Add or toggle a reaction on a message. Tapping the same emoji again removes it; tapping a different emoji replaces the previous reaction.
+
+```
+POST /messages/:messageId/reactions
+```
+
+**Authentication**: Required (JWT)
+
+**Request Body**:
+```json
+{
+  "emoji": "👍"
+}
+```
+
+**Response** (200 OK):
+```json
+{
+  "action": "added",
+  "emoji": "👍"
+}
+```
+
+**Toggle-off Response** (200 OK):
+```json
+{
+  "action": "removed",
+  "emoji": "👍"
+}
+```
+
+**Allowed Emojis**: `👍`, `👎`, `❤️`, `🔥`, `😂`, `😮`, `😢`, `🎉`, `🙏`, `💯`, `👏`, `🤔`, `😍`, `🥳`, `😎`, `💪`, `✨`, `🚀`, `👀`, `💀`
+
+**Notes**:
+- One reaction per user per message
+- Same emoji toggles off (removes)
+- Different emoji replaces previous reaction
+- Validates user is a participant (thread member or group member)
+- Emits `reaction.new` or `reaction.removed` WebSocket event to other participants
+
+**Errors**:
+- 403: Not a participant in the conversation
+- 404: Message not found
+
+---
+
+### Remove Reaction
+
+Remove your reaction from a message (regardless of which emoji).
+
+```
+DELETE /messages/:messageId/reactions
+```
+
+**Authentication**: Required (JWT)
+
+**Response** (200 OK):
+```json
+{
+  "removed": true
+}
+```
+
+**No-op Response** (200 OK):
+```json
+{
+  "removed": false
+}
+```
+
+---
+
+### Get Reaction Counts
+
+Get aggregated reaction counts for a message.
+
+```
+GET /messages/:messageId/reactions
+```
+
+**Authentication**: Required (JWT)
+
+**Response** (200 OK):
+```json
+[
+  { "emoji": "👍", "count": 3, "reacted": true },
+  { "emoji": "❤️", "count": 1, "reacted": false }
+]
+```
+
+**Notes**:
+- Returns aggregated counts grouped by emoji
+- `reacted` indicates whether the current user used that emoji
+- Results cached in Redis (5-minute TTL)
+- Validates user is a participant
 
 ---
 
@@ -880,13 +1274,17 @@ See [WebSocket Events Contract](./websocket-events.md) for complete event docume
 |-------|---------|-------------|
 | `message.new` | Envelope object | New encrypted envelope |
 | `message.ack` | ACK payload | Delivery/read status update |
-| `typing.start` | `{ userId, deviceId }` | User started typing |
-| `typing.stop` | `{ userId, deviceId }` | User stopped typing |
+| `typing.start` | `{ userId, deviceId, groupId? }` | User started typing |
+| `typing.stop` | `{ userId, deviceId, groupId? }` | User stopped typing |
 | `presence.active` | `{ userId, deviceId }` | User/device came online |
+| `reaction.new` | `{ reactionId, messageId, userId, emoji, createdAt, threadId, groupId }` | Reaction added |
+| `reaction.removed` | `{ reactionId, messageId, userId, emoji, threadId, groupId }` | Reaction removed |
 
 ### Client → Server Events
 
 | Event | Payload | Description |
 |-------|---------|-------------|
-| `typing.start` | `{ recipientUserId }` | Start typing indicator |
-| `typing.stop` | `{ recipientUserId }` | Stop typing indicator |
+| `typing.start` | `{ recipientUserId }` | Start typing in 1:1 chat |
+| `typing.stop` | `{ recipientUserId }` | Stop typing in 1:1 chat |
+| `typing.start` | `{ groupId }` | Start typing in group chat |
+| `typing.stop` | `{ groupId }` | Stop typing in group chat |

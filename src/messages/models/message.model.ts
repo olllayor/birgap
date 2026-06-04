@@ -1,25 +1,41 @@
 import { Field, ID, Int, ObjectType } from '@nestjs/graphql';
+import { MessageMediaType } from './message-media.model';
 
 @ObjectType('Message')
 export class MessageType {
   @Field(() => ID)
-  id: string;
+  id!: string;
 
   @Field(() => ID, { nullable: true })
-  threadId: string | null;
+  threadId!: string | null;
 
   @Field(() => ID, { nullable: true })
-  groupId: string | null;
+  groupId!: string | null;
 
   @Field(() => ID)
-  senderUserId: string;
+  senderUserId!: string;
 
   @Field(() => ID)
-  senderDeviceId: string;
+  senderDeviceId!: string;
 
   @Field(() => Int)
-  threadSequence: number;
+  threadSequence!: number;
+
+  @Field(() => ID, { nullable: true })
+  replyToMessageId!: string | null;
+
+  @Field(() => MessageType, { nullable: true })
+  replyTo?: MessageType | null;
+
+  @Field(() => [MessageMediaType!]!)
+  media!: MessageMediaType[];
 
   @Field()
-  createdAt: Date;
+  createdAt!: Date;
+
+  @Field({ nullable: true })
+  deletedAt?: Date | null;
+
+  @Field({ nullable: true })
+  editedAt?: Date | null;
 }
