@@ -543,9 +543,200 @@ Behavior:
 - ACKs are per recipient device.
 - The sender receives a realtime `message.ack` event if connected.
 
-## Realtime
+## Reactions
 
-Realtime uses Socket.IO. The socket does not use the REST access token directly. First exchange the REST token for a short-lived single-use socket ticket.
+Reactions use a fixed allowlist of 20 emojis. One reaction per user per message (tap to toggle).
+
+### Allowed Emojis
+
+`👍 👎 ❤️ 🔥 😂 😮 😢 🎉 🙏 💯 👏 🤔 😍 🥳 😎 💪 ✨ 🚀 👀 💀`
+
+### Toggle Reaction
+
+`POST /reactions/:messageId`
+
+Protected endpoint.
+
+```json
+{
+  "emoji": "🔥"
+}
+```
+
+Returns:
+```json
+{
+  "action": "added",
+  "emoji": "🔥",
+  "reactionId": "reaction-uuid"
+}
+```
+
+If the user already reacted with the same emoji, it is removed:
+```json
+{
+  "action": "removed",
+  "emoji": "🔥",
+  "reactionId": "reaction-uuid"
+}
+```
+
+### Remove Reaction
+
+`DELETE /reactions/:messageId`
+
+Protected endpoint. Removes the current user's reaction.
+
+Returns:
+```json
+{ "removed": true }
+```
+
+### Get Aggregated Reactions
+
+`GET /reactions/:messageId/aggregated`
+
+Protected endpoint. Returns counts + whether the current user reacted.
+
+```json
+[
+  { "emoji": "🔥", "count": 3, "reacted": true },
+  { "emoji": "😂", "count": 1, "reacted": false }
+]
+```
+
+Cached in Redis (5-min TTL). Returns cached data when available.
+
+### Real-time Reaction Events
+
+Sent via Socket.IO to thread participants (excluding the actor).
+
+#### `reaction.new`
+
+```json
+{
+  "reactionId": "reaction-uuid",
+  "messageId": "message-uuid",
+  "userId": "reacting-user-uuid",
+  "emoji": "🔥",
+  "createdAt": "2026-05-10T12:00:00.000Z",
+  "threadId": "direct-thread-uuid",
+  "groupId": null
+}
+```
+
+#### `reaction.removed`
+
+```json
+{
+  "reactionId": "reaction-uuid",
+  "messageId": "message-uuid",
+  "userId": "reacting-user-uuid",
+  "emoji": "🔥",
+  "threadId": "direct-thread-uuid",
+  "groupId": null
+}
+```
+
+Client behavior:
+1. On `reaction.new`: increment local count for that emoji, set `reacted=true` if `userId == currentUser`
+2. On `reaction.removed`: decrement count, set `reacted=false` if `userId == currentUser`
+3. Animate emoji pop-in on new reaction
+
+---
+
+## GIF & Media Attachments
+
+BirGap treats GIFs as `IMAGE` type with `mimeType: image/gif`. No server-side transcoding (E2EE). Clients MAY locally transcode large GIFs to H.264 MP4 (no audio) and upload as `VIDEO` type for bandwidth savings.
+
+### Allowed MIME Types
+
+| `mediaType` | Allowed `mimeType` |
+|---|---|
+| `IMAGE` | `image/jpeg`, `image/png`, `image/webp`, `image/gif` |
+| `VIDEO` | `video/mp4`, `video/quicktime` |
+| `AUDIO` | `audio/mpeg`, `audio/ogg`, `audio/aac`, `audio/mp4` |
+| `DOCUMENT` | `application/pdf`, `text/plain` |
+
+### Limits
+
+- Max 10 attachments per message
+- Max 100 MB per file (enforced at presigned URL generation)
+- Max 5 MB for avatars (separate endpoint)
+
+### 3-Step Upload Flow
+
+**Step 1: Init** — `POST /messages/media/init`
+
+```json
+{
+  "mediaType": "IMAGE",
+  "filename": "meme.gif",
+  "mimeType": "image/gif",
+  "sizeBytes": 245678,
+  "mediaCiphertextHash": "sha256-of-encrypted-blob",
+  "width": 480,
+  "height": 270,
+  "duration": 3000,
+  "thumbnailCiphertextHash": "sha256-of-encrypted-thumbnail"
+}
+```
+
+Returns:
+```json
+{
+  "mediaId": "media-uuid",
+  "uploadUrl": "https://r2.example.com/presigned-put-url",
+  "bucketKey": "media/{userId}/{uuid}.gif"
+}
+```
+
+**Step 2: Upload** — `PUT` encrypted blob to `uploadUrl` with `Content-Length` and `Content-Type`.
+
+**Step 3: Complete** — `POST /messages/media/:mediaId/complete`
+
+```json
+{ "sizeBytes": 245678 }
+```
+
+Returns finalized media row.
+
+**Attach to Message** — include `mediaIds` in `POST /messages`:
+
+```json
+{
+  "senderDeviceId": "...",
+  "recipientUserId": "...",
+  "idempotencyKey": "...",
+  "mediaIds": ["media-uuid-1", "media-uuid-2"],
+  "envelopes": [...]
+}
+```
+
+**Download** — `GET /messages/media/:mediaId/download-url`
+
+```json
+{ "downloadUrl": "https://r2.example.com/presigned-get-url", "expiresIn": 300 }
+```
+
+### GIF Search (Client-Side Only)
+
+- **No backend search endpoint** — privacy: server never sees GIF search queries
+- Mobile app calls Giphy / Tenor API directly
+- Requires API key in app config (`--dart-define=GIPHY_API_KEY=...`)
+- Render as grid panel (not inline bot popup)
+- User taps GIF → download → encrypt → run 3-step upload → send with `mediaIds[]`
+
+### Saved GIFs (Local-Only)
+
+- Store in local Drift table: `saved_gifs (mediaId TEXT PK, addedAt INTEGER)`
+- LRU eviction at 50 entries
+- Synced via encrypted backup blob
+- No server API
+
+---
+
+## Realtime
 
 ### Create WebSocket Ticket
 

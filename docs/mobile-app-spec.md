@@ -305,6 +305,83 @@ class OneTimePrekey with _$OneTimePrekey {
 }
 ```
 
+### `media_model.dart`
+
+```dart
+enum MediaType { IMAGE, VIDEO, AUDIO, DOCUMENT }
+enum UploadStatus { PENDING, COMPLETE }
+
+@freezed
+class MessageMedia with _$MessageMedia {
+  const factory MessageMedia({
+    required String id,
+    required String messageId,
+    required MediaType mediaType,
+    required String mimeType,
+    required int sizeBytes,
+    required String filename,
+    String? thumbnailBucketKey,
+    int? width,
+    int? height,
+    int? duration,
+    required String mediaCiphertextHash,
+    String? thumbnailCiphertextHash,
+    required UploadStatus uploadStatus,
+    DateTime? uploadedAt,
+    String? uploadSessionId,
+    required DateTime createdAt,
+  }) = _MessageMedia;
+
+  factory MessageMedia.fromJson(Map<String, dynamic> json) => _$MessageMediaFromJson(json);
+}
+
+@freezed
+class MediaInitResult with _$MediaInitResult {
+  const factory MediaInitResult({
+    required String mediaId,
+    required String uploadUrl,
+    required String bucketKey,
+  }) = _MediaInitResult;
+
+  factory MediaInitResult.fromJson(Map<String, dynamic> json) => _$MediaInitResultFromJson(json);
+}
+```
+
+### `reaction_model.dart`
+
+```dart
+@freezed
+class ReactionToggleResult with _$ReactionToggleResult {
+  const factory ReactionToggleResult({
+    required String action, // 'added' | 'removed'
+    required String emoji,
+    required String reactionId,
+  }) = _ReactionToggleResult;
+
+  factory ReactionToggleResult.fromJson(Map<String, dynamic> json) => _$ReactionToggleResultFromJson(json);
+}
+
+@freezed
+class ReactionRemoveResult with _$ReactionRemoveResult {
+  const factory ReactionRemoveResult({
+    required bool removed,
+  }) = _ReactionRemoveResult;
+
+  factory ReactionRemoveResult.fromJson(Map<String, dynamic> json) => _$ReactionRemoveResultFromJson(json);
+}
+
+@freezed
+class ReactionCount with _$ReactionCount {
+  const factory ReactionCount({
+    required String emoji,
+    required int count,
+    required bool reacted,
+  }) = _ReactionCount;
+
+  factory ReactionCount.fromJson(Map<String, dynamic> json) => _$ReactionCountFromJson(json);
+}
+```
+
 ---
 
 ## 4. API Client (`core/api/`)
@@ -568,6 +645,8 @@ class MediaApi {
     int? width,
     int? height,
     int? duration,
+    String? thumbnailCiphertextHash,
+    List<int>? thumbnailBytes,
   }) async {
     final response = await _dio.post(ApiEndpoints.mediaInit, data: {
       'mediaType': mediaType,
@@ -578,12 +657,32 @@ class MediaApi {
       if (width != null) 'width': width,
       if (height != null) 'height': height,
       if (duration != null) 'duration': duration,
+      if (thumbnailCiphertextHash != null) 'thumbnailCiphertextHash': thumbnailCiphertextHash,
     });
     return MediaInitResult.fromJson(response.data);
   }
 
   /// Step 2: PUT the encrypted blob directly to R2.
   Future<void> uploadToR2({
+    required String uploadUrl,
+    required List<int> encryptedBytes,
+    required String mimeType,
+    required int sizeBytes,
+  }) async {
+    await Dio().put(
+      uploadUrl,
+      data: Stream.fromIterable([encryptedBytes]),
+      options: Options(
+        headers: {
+          Headers.contentLengthHeader: sizeBytes,
+          Headers.contentTypeHeader: mimeType,
+        },
+      ),
+    );
+  }
+
+  /// Step 2b (optional): upload thumbnail to R2.
+  Future<void> uploadThumbnailToR2({
     required String uploadUrl,
     required List<int> encryptedBytes,
     required String mimeType,
@@ -617,6 +716,47 @@ class MediaApi {
 }
 ```
 
+### `reactions_api.dart`
+
+```dart
+class ReactionsApi {
+  final Dio _dio;
+  ReactionsApi(this._dio);
+
+  /// Toggle an emoji reaction on a message (add if not present, remove if same).
+  /// Returns { action: 'added' | 'removed', emoji: string, reactionId: string }
+  Future<ReactionToggleResult> toggle(String messageId, String emoji) async {
+    final response = await _dio.post(
+      ApiEndpoints.reactionToggle(messageId),
+      data: {'emoji': emoji},
+    );
+    return ReactionToggleResult.fromJson(response.data);
+  }
+
+  /// Remove the current user's reaction from a message.
+  Future<ReactionRemoveResult> remove(String messageId) async {
+    final response = await _dio.delete(ApiEndpoints.reactionRemove(messageId));
+    return ReactionRemoveResult.fromJson(response.data);
+  }
+
+  /// Get aggregated reaction counts for a message, including whether the current user reacted.
+  Future<List<ReactionCount>> getAggregated(String messageId) async {
+    final response = await _dio.get(ApiEndpoints.reactionAggregated(messageId));
+    return (response.data as List).map((e) => ReactionCount.fromJson(e)).toList();
+  }
+}
+```
+
+Where `ApiEndpoints` gains:
+```dart
+static const String mediaInit = '/messages/media/init';
+static String mediaComplete(String id) => '/messages/media/$id/complete';
+static String mediaDownloadUrl(String id) => '/messages/media/$id/download-url';
+static String reactionToggle(String messageId) => '/reactions/$messageId';
+static String reactionRemove(String messageId) => '/reactions/$messageId';
+static String reactionAggregated(String messageId) => '/reactions/$messageId/aggregated';
+```
+
 Where `ApiEndpoints` gains:
 ```dart
 static const String mediaInit = '/messages/media/init';
@@ -637,11 +777,15 @@ class SocketManager {
   final _messageAckController = StreamController<Map<String, dynamic>>.broadcast();
   final _typingController = StreamController<Map<String, String>>.broadcast();
   final _presenceController = StreamController<Map<String, String>>.broadcast();
+  final _reactionNewController = StreamController<Map<String, dynamic>>.broadcast();
+  final _reactionRemovedController = StreamController<Map<String, dynamic>>.broadcast();
 
   Stream<Map<String, dynamic>> get onMessageNew => _messageNewController.stream;
   Stream<Map<String, dynamic>> get onMessageAck => _messageAckController.stream;
   Stream<Map<String, String>> get onTyping => _typingController.stream;
   Stream<Map<String, String>> get onPresence => _presenceController.stream;
+  Stream<Map<String, dynamic>> get onReactionNew => _reactionNewController.stream;
+  Stream<Map<String, dynamic>> get onReactionRemoved => _reactionRemovedController.stream;
 
   bool get isConnected => _socket?.connected ?? false;
 
@@ -657,6 +801,8 @@ class SocketManager {
     _socket!.on('typing.start', (data) => _typingController.add({'type': 'start', ...data}));
     _socket!.on('typing.stop', (data) => _typingController.add({'type': 'stop', ...data}));
     _socket!.on('presence.active', (data) => _presenceController.add(data));
+    _socket!.on('reaction.new', (data) => _reactionNewController.add(data));
+    _socket!.on('reaction.removed', (data) => _reactionRemovedController.add(data));
   }
 
   void sendTypingStart(String? recipientUserId, {String? groupId}) {
@@ -686,6 +832,8 @@ class SocketManager {
     _messageAckController.close();
     _typingController.close();
     _presenceController.close();
+    _reactionNewController.close();
+    _reactionRemovedController.close();
   }
 }
 ```
@@ -1068,6 +1216,85 @@ class PushService {
 5. PUT encrypted blob to uploadUrl (directly to R2)
 6. PUT /backups/current { version, bucketKey, sha256, sizeBytes }
 ```
+
+### Media Attachment Flow (Images, Videos, GIFs, Audio, Documents)
+
+```
+1. User selects media from gallery / camera / GIF picker
+2. Client encrypts the file locally (AES-256-GCM, random key per file)
+3. Compute SHA-256 of ciphertext → mediaCiphertextHash
+4. Optional: generate thumbnail (max 300px), encrypt → thumbnailCiphertextHash
+5. POST /messages/media/init with:
+   {
+     mediaType: "IMAGE" | "VIDEO" | "AUDIO" | "DOCUMENT",
+     filename: "original-filename.gif",
+     mimeType: "image/gif",
+     sizeBytes: <encrypted_size>,
+     mediaCiphertextHash: "<sha256>",
+     width?: 1920,
+     height?: 1080,
+     duration?: 5000,
+     thumbnailCiphertextHash?: "<sha256>"
+   }
+6. Receive { mediaId, uploadUrl, bucketKey }
+7. PUT encrypted bytes to uploadUrl with Content-Type = mimeType
+8. POST /messages/media/:mediaId/complete { sizeBytes }
+9. Repeat for each attachment (max 10)
+10. Include mediaIds[] in POST /messages
+```
+
+**GIF specifics:**
+- MIME type: `image/gif` → sent as `mediaType: "IMAGE"`
+- No server-side transcoding (E2EE prevents it)
+- Large GIFs (>5MB): client MAY locally transcode to H.264 MP4 (no audio) and upload as `mediaType: "VIDEO"` with `duration`, `width`, `height`
+- Render: `image/gif` → `Image.memory()` or `CachedNetworkImage`; `video/mp4` loops → `VideoPlayer` with `loop: true, muted: true`
+
+**Thumbnails:**
+- Generate locally before encryption (e.g., 300px max dimension)
+- Encrypt thumbnail separately, upload via second R2 PUT if API supports it
+- Include `thumbnailCiphertextHash` in init payload
+
+### GIF Search & Send Flow (Client-Side Only)
+
+```
+1. User taps GIF button in composer
+2. App calls Giphy / Tenor API directly (requires API key in app config)
+3. Render results in grid panel (NOT inline bot popup)
+4. User taps a GIF → download to temp file
+5. Encrypt locally → run Media Attachment Flow (steps 2-10 above)
+6. Send message with mediaIds[]
+```
+
+- No backend endpoint for GIF search (privacy: server never sees search queries)
+- Giphy/Tenor API key stored in app config / `--dart-define`
+- Cache recent searches locally (SQLite, encrypted)
+
+### Saved GIFs (Local-Only)
+
+```
+- Store favorited GIF mediaIds in local Drift table: `saved_gifs (mediaId, addedAt)`
+- Max 50 entries (LRU eviction when full)
+- Sync via encrypted backup (included in backup blob)
+- No server API — fully client-side
+```
+
+### Reactions Flow
+
+```
+1. User long-presses message → emoji picker (20 allowed: 👍 👎 ❤️ 🔥 😂 😮 😢 🎉 🙏 💯 👏 🤔 😍 🥳 😎 💪 ✨ 🚀 👀 💀)
+2. Tap emoji → POST /reactions/:messageId { emoji }
+3. Server returns { action: "added" | "removed", emoji, reactionId }
+4. WebSocket broadcasts reaction.new / reaction.removed to thread participants
+5. On receive: update local reaction counts, animate emoji
+6. Tap same emoji again → toggle off (action: "removed")
+7. GET /reactions/:messageId/aggregated → { emoji, count, reacted } for initial load
+```
+
+**Real-time events:**
+- `reaction.new`: { reactionId, messageId, userId, emoji, createdAt, threadId?, groupId? }
+- `reaction.removed`: { reactionId, messageId, userId, emoji, threadId?, groupId? }
+- Emit only to other participants (not sender)
+- Cache aggregated counts in Redis (5-min TTL) — API returns cached data when available
 
 ---
 
