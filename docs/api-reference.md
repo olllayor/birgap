@@ -549,6 +549,91 @@ POST /messages
 
 ---
 
+### Forward Message
+
+Forward an existing message to one or more targets (direct threads or groups). Media attachments are cloned server-side.
+
+```
+POST /messages/forward
+```
+
+**Authentication**: Required (JWT)
+
+**Request Body**:
+```json
+{
+  "sourceMessageId": "original-message-uuid",
+  "senderDeviceId": "sender-device-uuid",
+  "idempotencyKey": "client-generated-unique-key",
+  "targets": [
+    {
+      "type": "direct",
+      "recipientUserId": "recipient-user-uuid",
+      "envelopes": [
+        {
+          "recipientDeviceId": "recipient-device-uuid",
+          "ciphertext": {
+            "type": "signal-message",
+            "body": "base64-ciphertext"
+          }
+        }
+      ]
+    },
+    {
+      "type": "group",
+      "groupId": "group-uuid",
+      "ciphertext": {
+        "type": "signal-group-message",
+        "body": "base64-group-ciphertext"
+      }
+    }
+  ]
+}
+```
+
+**Field constraints**:
+- `sourceMessageId`: UUID of a message the caller can access
+- `senderDeviceId`: active device UUID for the current user
+- `idempotencyKey`: 8–128 characters, unique per forward request
+- `targets`: 1–20 items, each with `type` = `"direct"` or `"group"`
+- Direct targets require `recipientUserId` + `envelopes` (one per active recipient device)
+- Group targets require `groupId` + `ciphertext`
+
+**Response** (200 OK):
+```json
+{
+  "results": [
+    {
+      "targetType": "direct",
+      "targetId": "recipient-user-uuid",
+      "success": true,
+      "messageId": "new-message-uuid"
+    },
+    {
+      "targetType": "group",
+      "targetId": "group-uuid",
+      "success": false,
+      "error": "You are not a member of this group"
+    }
+  ]
+}
+```
+
+**Notes**:
+- Each target is processed independently — partial failure is possible
+- Cannot forward a deleted (tombstoned) message
+- Forwarded messages are marked with `forwarded: true`
+- Media attachments are cloned server-side; recipients download via the normal `GET /messages/media/:mediaId/download-url` flow
+- Per-target idempotency keys are derived internally (`{key}:0`, `{key}:1`, etc.)
+
+**Errors**:
+- 400: `sourceMessageId` is not a valid UUID
+- 403: Caller cannot access the source message
+- 403: Source message is deleted
+- 403: Sender device is not active for the current user
+
+---
+
 ## Media Attachments
 
 The media flow has 3 steps per attachment: `init` → upload to R2 → `complete`. Attachments are bound to a message at `POST /messages` time (or `POST /groups/:id/envelopes`).

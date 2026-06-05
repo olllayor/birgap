@@ -16,6 +16,15 @@ import { MessagesService } from './messages.service';
     BullModule.registerQueue({
       name: 'storage-cleanup',
     }),
+    BullModule.registerQueue({
+      name: 'group-fanout',
+      defaultJobOptions: {
+        removeOnComplete: { count: 500, age: 3600 },
+        removeOnFail: { count: 1000, age: 7 * 24 * 3600 },
+        attempts: 3,
+        backoff: { type: 'exponential', delay: 2000 },
+      },
+    }),
   ],
   controllers: [MessagesController, MediaController],
   providers: [MessagesService, MediaService, MessagesResolver, MessageLoader],

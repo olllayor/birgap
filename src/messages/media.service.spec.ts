@@ -198,6 +198,7 @@ describe('MediaService', () => {
               { id: 'media-1', bucketKey: 'media/user-1/a.jpg', thumbnailBucketKey: 'media/user-1/a-thumb.jpg' },
               { id: 'media-2', bucketKey: 'media/user-1/b.jpg', thumbnailBucketKey: null },
             ]),
+          count: jest.fn().mockResolvedValue(0),
         },
       } as unknown as PrismaService;
       const r2 = {} as R2Service;
@@ -209,6 +210,47 @@ describe('MediaService', () => {
       expect(add).toHaveBeenCalledWith('cleanup', { bucketKey: 'media/user-1/a.jpg' });
       expect(add).toHaveBeenCalledWith('cleanup', { bucketKey: 'media/user-1/a-thumb.jpg' });
       expect(add).toHaveBeenCalledWith('cleanup', { bucketKey: 'media/user-1/b.jpg' });
+    });
+
+    it('skips R2 deletion when another message shares the same bucketKey', async () => {
+      const add = jest.fn().mockResolvedValue(undefined);
+      const queue = { add } as unknown as Queue;
+      const prisma = {
+        messageMedia: {
+          findMany: jest.fn().mockResolvedValue([
+            { id: 'media-1', bucketKey: 'media/user-1/shared.jpg', thumbnailBucketKey: null },
+          ]),
+          count: jest.fn().mockResolvedValue(1),
+        },
+      } as unknown as PrismaService;
+      const r2 = {} as R2Service;
+      const service = new MediaService(prisma, r2, mockConfig, queue);
+
+      await service.cleanupMessageMedia('message-1');
+
+      expect(add).not.toHaveBeenCalled();
+    });
+
+    it('skips thumbnail R2 deletion when another message references the same thumbnail key', async () => {
+      const add = jest.fn().mockResolvedValue(undefined);
+      const queue = { add } as unknown as Queue;
+      const prisma = {
+        messageMedia: {
+          findMany: jest.fn().mockResolvedValue([
+            { id: 'media-1', bucketKey: 'media/user-1/a.jpg', thumbnailBucketKey: 'media/user-1/shared-thumb.jpg' },
+          ]),
+          count: jest.fn()
+            .mockResolvedValueOnce(0)
+            .mockResolvedValueOnce(2),
+        },
+      } as unknown as PrismaService;
+      const r2 = {} as R2Service;
+      const service = new MediaService(prisma, r2, mockConfig, queue);
+
+      await service.cleanupMessageMedia('message-1');
+
+      expect(add).toHaveBeenCalledTimes(1);
+      expect(add).toHaveBeenCalledWith('cleanup', { bucketKey: 'media/user-1/a.jpg' });
     });
   });
 });

@@ -6,13 +6,16 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { EventEmitter2 } from '@nestjs/event-emitter';
+import { InjectQueue } from '@nestjs/bullmq';
 import { Prisma } from '@prisma/client';
+import { Queue } from 'bullmq';
 import { PrismaService } from '../prisma/prisma.service';
 import { PushService } from '../push/push.service';
 import { UnreadService } from '../unread/unread.service';
 import { AckMessageDto } from './dto/ack-message.dto';
 import { DeleteMessageDto, DeleteMessageScope } from './dto/delete-message.dto';
 import { EditMessageDto } from './dto/edit-message.dto';
+import { ForwardMessageDto, ForwardTargetDto } from './dto/forward-message.dto';
 import { MarkAllReadDto } from './dto/mark-all-read.dto';
 import { SendMessageDto } from './dto/send-message.dto';
 import { MediaService } from './media.service';
@@ -27,6 +30,7 @@ export class MessagesService {
     private readonly config: ConfigService,
     private readonly push: PushService,
     private readonly mediaService: MediaService,
+    @InjectQueue('group-fanout') private readonly fanoutQueue: Queue,
   ) {}
 
   async send(senderUserId: string, dto: SendMessageDto) {
@@ -193,6 +197,308 @@ export class MessagesService {
     }
   }
 
+  async forward(userId: string, dto: ForwardMessageDto) {
+    await this.assertActiveDevice(userId, dto.senderDeviceId);
+
+    const sourceMessage = await this.assertMessageAccess(userId, dto.sourceMessageId);
+
+    if (sourceMessage.deletedAt) {
+      throw new ForbiddenException('Cannot forward a deleted message');
+    }
+
+    const sourceMedia = await this.prisma.messageMedia.findMany({
+      where: { messageId: dto.sourceMessageId },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    const results: Array<{
+      targetType: 'direct' | 'group';
+      targetId: string;
+      success: boolean;
+      messageId?: string;
+      error?: string;
+    }> = [];
+
+    for (let i = 0; i < dto.targets.length; i++) {
+      const target = dto.targets[i];
+      const perTargetKey = `${dto.idempotencyKey}:${i}`;
+
+      try {
+        if (target.type === 'direct') {
+          this.validateDirectTarget(target);
+          const messageId = await this.forwardToDirect(
+            userId,
+            dto.senderDeviceId,
+            perTargetKey,
+            target,
+            sourceMedia,
+          );
+          results.push({ targetType: 'direct', targetId: target.recipientUserId!, success: true, messageId });
+        } else {
+          this.validateGroupTarget(target);
+          const messageId = await this.forwardToGroup(
+            userId,
+            dto.senderDeviceId,
+            perTargetKey,
+            target,
+            sourceMedia,
+          );
+          results.push({ targetType: 'group', targetId: target.groupId!, success: true, messageId });
+        }
+      } catch (err) {
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        results.push({
+          targetType: target.type,
+          targetId: target.type === 'direct' ? target.recipientUserId ?? '' : target.groupId ?? '',
+          success: false,
+          error: errorMsg,
+        });
+      }
+    }
+
+    return { results };
+  }
+
+  private validateDirectTarget(target: ForwardTargetDto) {
+    if (!target.recipientUserId) {
+      throw new BadRequestException('recipientUserId is required for direct targets');
+    }
+    if (!target.envelopes || target.envelopes.length === 0) {
+      throw new BadRequestException('envelopes are required for direct targets');
+    }
+  }
+
+  private validateGroupTarget(target: ForwardTargetDto) {
+    if (!target.groupId) {
+      throw new BadRequestException('groupId is required for group targets');
+    }
+    if (target.ciphertext === undefined || target.ciphertext === null) {
+      throw new BadRequestException('ciphertext is required for group targets');
+    }
+  }
+
+  private async forwardToDirect(
+    senderUserId: string,
+    senderDeviceId: string,
+    idempotencyKey: string,
+    target: ForwardTargetDto,
+    sourceMedia: import('@prisma/client').MessageMedia[],
+  ): Promise<string> {
+    const existing = await this.prisma.message.findUnique({
+      where: {
+        senderDeviceId_idempotencyKey: {
+          senderDeviceId,
+          idempotencyKey,
+        },
+      },
+    });
+    if (existing) {
+      return existing.id;
+    }
+
+    try {
+      const created = await this.prisma.$transaction(async (tx) => {
+        const allDevices = await tx.device.findMany({
+          where: {
+            active: true,
+            OR: [
+              { id: senderDeviceId },
+              { userId: target.recipientUserId },
+              { userId: senderUserId, id: { not: senderDeviceId } },
+            ],
+          },
+          select: { id: true, userId: true },
+        });
+
+        const senderDevice = allDevices.find((d) => d.id === senderDeviceId);
+        if (!senderDevice || senderDevice.userId !== senderUserId) {
+          throw new ForbiddenException('Sender device is not active for this user');
+        }
+        if (senderUserId === target.recipientUserId) {
+          throw new BadRequestException('Recipient must be another user');
+        }
+
+        const recipientDevices = allDevices.filter((d) => d.userId === target.recipientUserId);
+        if (recipientDevices.length === 0) {
+          throw new NotFoundException('Recipient has no active devices');
+        }
+
+        const senderSyncDeviceIds = new Set(
+          allDevices.filter((d) => d.userId === senderUserId && d.id !== senderDeviceId).map((d) => d.id),
+        );
+        const recipientDeviceIds = new Set(recipientDevices.map((device) => device.id));
+        const allowedDeviceIds = new Set([...recipientDeviceIds, ...senderSyncDeviceIds]);
+        const envelopeDeviceIds = new Set(target.envelopes!.map((e) => e.recipientDeviceId));
+
+        for (const deviceId of recipientDeviceIds) {
+          if (!envelopeDeviceIds.has(deviceId)) {
+            throw new BadRequestException('Missing envelope for active recipient device');
+          }
+        }
+
+        for (const envelope of target.envelopes!) {
+          if (!allowedDeviceIds.has(envelope.recipientDeviceId)) {
+            throw new BadRequestException('Envelope recipient device is not part of this direct message');
+          }
+        }
+
+        const [userAId, userBId] = canonicalDirectPair(senderUserId, target.recipientUserId!);
+        const thread = await tx.directThread.upsert({
+          where: { userAId_userBId: { userAId, userBId } },
+          update: {},
+          create: { userAId, userBId },
+        });
+        const sequencedThread = await tx.directThread.update({
+          where: { id: thread.id },
+          data: { latestSequence: { increment: 1 } },
+        });
+
+        const message = await tx.message.create({
+          data: {
+            threadId: thread.id,
+            senderUserId,
+            senderDeviceId,
+            idempotencyKey,
+            threadSequence: sequencedThread.latestSequence,
+            forwarded: true,
+            envelopes: {
+              create: target.envelopes!.map((envelope) => {
+                const isRecipientDevice = recipientDeviceIds.has(envelope.recipientDeviceId);
+                return {
+                  recipientUserId: isRecipientDevice ? target.recipientUserId! : senderUserId,
+                  recipientDeviceId: envelope.recipientDeviceId,
+                  ciphertext: envelope.ciphertext as Prisma.InputJsonValue,
+                };
+              }),
+            },
+          },
+          include: { envelopes: true, media: { orderBy: { createdAt: 'asc' } } },
+        });
+
+        if (sourceMedia.length > 0) {
+          await this.mediaService.cloneMediaForForward(tx, senderUserId, message.id, sourceMedia);
+        }
+
+        return message;
+      });
+
+      this.events.emit('message.created', this.serializeMessage(created));
+
+      if (created.threadId) {
+        this.unreadService
+          .enqueueRecalc({
+            userId: target.recipientUserId!,
+            threadId: created.threadId,
+            threadType: 'direct',
+            reason: 'new_message',
+          })
+          .catch((error) => {
+            this.events.emit('error', {
+              message: 'Failed to enqueue unread recalc',
+              error: error instanceof Error ? error.message : String(error),
+            });
+          });
+      }
+
+      return created.id;
+    } catch (error) {
+      if (this.isUniqueConstraint(error)) {
+        const duplicate = await this.prisma.message.findUnique({
+          where: {
+            senderDeviceId_idempotencyKey: {
+              senderDeviceId,
+              idempotencyKey,
+            },
+          },
+        });
+        if (duplicate) {
+          return duplicate.id;
+        }
+      }
+      throw error;
+    }
+  }
+
+  private async forwardToGroup(
+    senderUserId: string,
+    senderDeviceId: string,
+    idempotencyKey: string,
+    target: ForwardTargetDto,
+    sourceMedia: import('@prisma/client').MessageMedia[],
+  ): Promise<string> {
+    const member = await this.prisma.groupMember.findUnique({
+      where: { groupId_userId: { groupId: target.groupId!, userId: senderUserId } },
+    });
+    if (!member) {
+      throw new ForbiddenException('You are not a member of this group');
+    }
+
+    const existing = await this.prisma.message.findUnique({
+      where: {
+        senderDeviceId_idempotencyKey: {
+          senderDeviceId,
+          idempotencyKey,
+        },
+      },
+    });
+    if (existing) {
+      return existing.id;
+    }
+
+    const message = await this.prisma.$transaction(async (tx) => {
+      const existingTx = await tx.message.findUnique({
+        where: {
+          senderDeviceId_idempotencyKey: {
+            senderDeviceId,
+            idempotencyKey,
+          },
+        },
+      });
+      if (existingTx) {
+        return existingTx;
+      }
+
+      const lastMessage = await tx.message.findFirst({
+        where: { groupId: target.groupId },
+        orderBy: { threadSequence: 'desc' },
+        select: { threadSequence: true },
+      });
+      const nextSequence = (lastMessage?.threadSequence ?? 0) + 1;
+
+      const created = await tx.message.create({
+        data: {
+          groupId: target.groupId,
+          senderUserId,
+          senderDeviceId,
+          idempotencyKey,
+          threadSequence: nextSequence,
+          forwarded: true,
+        },
+      });
+
+      if (sourceMedia.length > 0) {
+        await this.mediaService.cloneMediaForForward(tx, senderUserId, created.id, sourceMedia);
+      }
+
+      return created;
+    });
+
+    await this.fanoutQueue.add('fanout', {
+      messageId: message.id,
+      groupId: target.groupId,
+      senderUserId,
+      senderDeviceId,
+      ciphertext: target.ciphertext,
+      threadSequence: message.threadSequence,
+      replyToMessageId: null,
+      createdAt: message.createdAt.toISOString(),
+      mediaIds: sourceMedia.map((m) => m.id),
+      forwarded: true,
+    });
+
+    return message.id;
+  }
+
   async getPending(userId: string, deviceId: string, after?: string, limit = 50) {
     await this.assertActiveDevice(userId, deviceId);
 
@@ -214,6 +520,7 @@ export class MessagesService {
             senderDeviceId: true,
             threadSequence: true,
             replyToMessageId: true,
+            forwarded: true,
             createdAt: true,
           },
         },
@@ -356,6 +663,7 @@ export class MessagesService {
             senderDeviceId: true,
             threadSequence: true,
             replyToMessageId: true,
+            forwarded: true,
             createdAt: true,
             deletedAt: true,
             editedAt: true,
@@ -683,6 +991,7 @@ export class MessagesService {
     senderDeviceId: string;
     threadSequence: number;
     replyToMessageId?: string | null;
+    forwarded?: boolean;
     createdAt: Date;
     envelopes: unknown[];
     media?: unknown[];
@@ -695,6 +1004,7 @@ export class MessagesService {
       senderDeviceId: message.senderDeviceId,
       threadSequence: message.threadSequence,
       replyToMessageId: message.replyToMessageId ?? null,
+      forwarded: message.forwarded ?? false,
       createdAt: message.createdAt,
       envelopes: message.envelopes,
       media: message.media ?? [],

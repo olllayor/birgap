@@ -217,6 +217,35 @@ export class MediaService {
     return rows;
   }
 
+  async cloneMediaForForward(
+    tx: Prisma.TransactionClient,
+    forwarderUserId: string,
+    newMessageId: string,
+    sourceMedia: MessageMedia[],
+  ): Promise<void> {
+    if (sourceMedia.length === 0) return;
+
+    await tx.messageMedia.createMany({
+      data: sourceMedia.map((m) => ({
+        userId: forwarderUserId,
+        messageId: newMessageId,
+        mediaType: m.mediaType,
+        bucketKey: m.bucketKey,
+        mimeType: m.mimeType,
+        sizeBytes: m.sizeBytes,
+        filename: m.filename,
+        thumbnailBucketKey: m.thumbnailBucketKey,
+        width: m.width,
+        height: m.height,
+        duration: m.duration,
+        mediaCiphertextHash: m.mediaCiphertextHash,
+        thumbnailCiphertextHash: m.thumbnailCiphertextHash,
+        uploadStatus: 'COMPLETE' as const,
+        uploadedAt: new Date(),
+      })),
+    });
+  }
+
   async cleanupMessageMedia(messageId: string): Promise<void> {
     const media = await this.prisma.messageMedia.findMany({
       where: { messageId },
@@ -224,20 +253,31 @@ export class MediaService {
     });
 
     for (const m of media) {
-      const jobData: StorageCleanupJobData = { bucketKey: m.bucketKey };
-      await this.storageCleanupQueue.add('cleanup', jobData).catch((error) => {
-        this.logger.error(
-          `Failed to enqueue storage-cleanup for ${m.bucketKey}: ${(error as Error).message}`,
-        );
+      const otherRefs = await this.prisma.messageMedia.count({
+        where: { bucketKey: m.bucketKey, messageId: { not: messageId } },
       });
+      if (otherRefs === 0) {
+        const jobData: StorageCleanupJobData = { bucketKey: m.bucketKey };
+        await this.storageCleanupQueue.add('cleanup', jobData).catch((error) => {
+          this.logger.error(
+            `Failed to enqueue storage-cleanup for ${m.bucketKey}: ${(error as Error).message}`,
+          );
+        });
+      }
+
       if (m.thumbnailBucketKey) {
-        await this.storageCleanupQueue
-          .add('cleanup', { bucketKey: m.thumbnailBucketKey } satisfies StorageCleanupJobData)
-          .catch((error) => {
-            this.logger.error(
-              `Failed to enqueue storage-cleanup for ${m.thumbnailBucketKey}: ${(error as Error).message}`,
-            );
-          });
+        const thumbRefs = await this.prisma.messageMedia.count({
+          where: { bucketKey: m.thumbnailBucketKey, messageId: { not: messageId } },
+        });
+        if (thumbRefs === 0) {
+          await this.storageCleanupQueue
+            .add('cleanup', { bucketKey: m.thumbnailBucketKey } satisfies StorageCleanupJobData)
+            .catch((error) => {
+              this.logger.error(
+                `Failed to enqueue storage-cleanup for ${m.thumbnailBucketKey}: ${(error as Error).message}`,
+              );
+            });
+        }
       }
     }
   }
