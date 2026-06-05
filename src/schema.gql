@@ -53,6 +53,7 @@ type Message {
   createdAt: DateTime!
   deletedAt: DateTime
   editedAt: DateTime
+  forwarded: Boolean!
   groupId: ID
   id: ID!
   media: [MessageMedia!]!

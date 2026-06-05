@@ -6,6 +6,7 @@ import { AuthenticatedUser } from '../common/types/authenticated-user';
 import { AckMessageDto } from './dto/ack-message.dto';
 import { DeleteMessageDto } from './dto/delete-message.dto';
 import { EditMessageDto } from './dto/edit-message.dto';
+import { ForwardMessageDto } from './dto/forward-message.dto';
 import { MarkAllReadDto } from './dto/mark-all-read.dto';
 import { PendingQueryDto } from './dto/pending-query.dto';
 import { SendMessageDto } from './dto/send-message.dto';
@@ -22,6 +23,11 @@ export class MessagesController {
   @Post()
   send(@CurrentUser() user: AuthenticatedUser, @Body() dto: SendMessageDto) {
     return this.messagesService.send(user.userId, dto);
+  }
+
+  @Post('forward')
+  forward(@CurrentUser() user: AuthenticatedUser, @Body() dto: ForwardMessageDto) {
+    return this.messagesService.forward(user.userId, dto);
   }
 
   @Get('pending')

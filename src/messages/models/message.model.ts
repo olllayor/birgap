@@ -27,6 +27,9 @@ export class MessageType {
   @Field(() => MessageType, { nullable: true })
   replyTo?: MessageType | null;
 
+  @Field(() => Boolean)
+  forwarded!: boolean;
+
   @Field(() => [MessageMediaType!]!)
   media!: MessageMediaType[];
 

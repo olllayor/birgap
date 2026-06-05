@@ -17,6 +17,7 @@ export interface GroupFanoutJobData {
   replyToMessageId: string | null;
   createdAt: string;
   mediaIds: string[];
+  forwarded?: boolean;
 }
 
 @Processor('group-fanout', { concurrency: 5 })
@@ -33,7 +34,7 @@ export class GroupFanoutProcessor extends WorkerHost {
   }
 
   async process(job: Job<GroupFanoutJobData>): Promise<{ fannedOutTo: number }> {
-    const { messageId, groupId, senderUserId, senderDeviceId, ciphertext, threadSequence, replyToMessageId, createdAt, mediaIds } = job.data;
+    const { messageId, groupId, senderUserId, senderDeviceId, ciphertext, threadSequence, replyToMessageId, createdAt, mediaIds, forwarded } = job.data;
 
     // 1. Fetch all active devices for group members in a single query
     const activeDevices = await this.prisma.device.findMany({
@@ -82,6 +83,7 @@ export class GroupFanoutProcessor extends WorkerHost {
       senderDeviceId,
       threadSequence,
       replyToMessageId,
+      forwarded: forwarded ?? false,
       createdAt,
       media,
       envelopes: targetDevices.map((device) => ({
@@ -101,6 +103,7 @@ export class GroupFanoutProcessor extends WorkerHost {
           senderDeviceId,
           threadSequence,
           replyToMessageId,
+          forwarded: forwarded ?? false,
           createdAt,
           media,
         },

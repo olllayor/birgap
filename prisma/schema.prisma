@@ -159,6 +159,7 @@ model Message {
   idempotencyKey       String
   threadSequence       Int
   replyToMessageId     String?   @db.Uuid
+  forwarded            Boolean   @default(false)
   createdAt            DateTime  @default(now())
   deletedAt            DateTime?
   editedAt             DateTime?
@@ -186,7 +187,7 @@ model MessageMedia {
   userId                  String       @db.Uuid
   messageId               String?      @db.Uuid
   mediaType               MediaType
-  bucketKey               String       @unique
+  bucketKey               String
   mimeType                String
   sizeBytes               Int
   filename                String

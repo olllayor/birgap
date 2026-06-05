@@ -46,7 +46,7 @@ birgap_app/
 │   │   │   ├── device_api.dart               # POST/GET/DELETE /devices/*
 │   │   │   ├── prekey_api.dart               # POST/GET/PUT /devices/:id/prekeys/*
 │   │   │   ├── user_api.dart                 # GET /users/:id/devices/key-bundles
-│   │   │   ├── message_api.dart              # POST /messages, GET /messages/pending, POST /messages/:id/ack
+│   │   │   ├── message_api.dart              # POST /messages, POST /messages/forward, GET /messages/pending, POST /messages/:id/ack
 │   │   │   ├── media_api.dart                # POST /messages/media/init, /complete, GET /messages/media/:id/download-url
 │   │   │   ├── backup_api.dart               # POST /backups/*
 │   │   │   └── realtime_api.dart             # POST /realtime/token
@@ -199,6 +199,7 @@ class Message with _$Message {
     required int threadSequence,
     required String? text,
     required MessageStatus status,
+    @Default(false) bool forwarded,
     required DateTime createdAt,
     DateTime? deliveredAt,
     DateTime? readAt,
@@ -458,6 +459,7 @@ class ApiEndpoints {
   static String signedPrekeyRotate(String deviceId) => '/devices/$deviceId/signed-prekey';
   static String userKeyBundles(String userId) => '/users/$userId/devices/key-bundles';
   static const String messages = '/messages';
+  static const String messagesForward = '/messages/forward';
   static const String messagesPending = '/messages/pending';
   static String messageAck(String messageId) => '/messages/$messageId/ack';
   static const String realtimeToken = '/realtime/token';
@@ -568,6 +570,11 @@ class MessageApi {
 
   Future<Map<String, dynamic>> send(Map<String, dynamic> data) async {
     final response = await _dio.post(ApiEndpoints.messages, data: data);
+    return response.data;
+  }
+
+  Future<Map<String, dynamic>> forward(Map<String, dynamic> data) async {
+    final response = await _dio.post(ApiEndpoints.messagesForward, data: data);
     return response.data;
   }
 
@@ -967,6 +974,7 @@ Drift schema:
 //   threadSequence INTEGER NOT NULL
 //   text TEXT
 //   status TEXT NOT NULL (sending/pending/delivered/read/failed)
+//   forwarded INTEGER NOT NULL DEFAULT 0 (boolean: 1 = forwarded message)
 //   createdAt INTEGER NOT NULL (ms epoch)
 //   deliveredAt INTEGER
 //   readAt INTEGER
@@ -1164,6 +1172,33 @@ class PushService {
 8. On failure:
    a. If 401: refresh token, retry (idempotencyKey prevents duplicates)
    b. If 400/404: show error, mark message as "failed"
+```
+
+### Forward Message Flow
+
+```
+1. User long-presses a message → taps "Forward"
+2. User selects one or more targets (direct contacts or groups)
+3. Generate idempotencyKey: UUID v4 (8+ chars)
+4. For each direct target:
+   a. Fetch bundles: GET /users/:recipientUserId/devices/key-bundles
+   b. GET /devices → get own other devices (for sender-sync)
+   c. For each recipient device + own other devices:
+      - encryptor.encryptForDevice(plaintext, theirKeyBundle)
+      - Build envelope { recipientDeviceId, ciphertext }
+   d. Build target: { type: "direct", recipientUserId, envelopes }
+5. For each group target:
+   a. Encrypt plaintext with the group shared key
+   b. Build target: { type: "group", groupId, ciphertext }
+6. POST /messages/forward: { sourceMessageId, senderDeviceId, idempotencyKey, targets }
+7. On response:
+   a. For each result where success=true:
+      - Save forwarded message to local DB with { id, threadId, forwarded: true }
+      - Show in destination chat UI with "Forwarded" badge
+   b. For each result where success=false:
+      - Show error toast for that target (e.g. "Could not forward to Group X")
+8. Media attachments: no re-upload needed — server clones them automatically.
+   Recipients download via GET /messages/media/:mediaId/download-url as usual.
 ```
 
 ### Receive Message Flow

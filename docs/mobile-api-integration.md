@@ -459,6 +459,86 @@ Returns the finalized media row.
 
 **Stale uploads**: A `media-cleanup` BullMQ job runs daily and deletes R2 objects + DB rows for any media that stayed in `PENDING` for longer than `MEDIA_PENDING_TIMEOUT_HOURS` (default 24).
 
+### Forward Message
+
+Forward an existing message to one or more targets (direct threads or groups). The server clones media attachments automatically — no re-upload needed.
+
+`POST /messages/forward`
+
+Protected endpoint.
+
+```json
+{
+  "sourceMessageId": "original-message-uuid",
+  "senderDeviceId": "sender-device-uuid",
+  "idempotencyKey": "client-generated-unique-key",
+  "targets": [
+    {
+      "type": "direct",
+      "recipientUserId": "recipient-user-uuid",
+      "envelopes": [
+        {
+          "recipientDeviceId": "recipient-device-uuid",
+          "ciphertext": {
+            "type": "signal-message",
+            "body": "base64-ciphertext"
+          }
+        }
+      ]
+    },
+    {
+      "type": "group",
+      "groupId": "group-uuid",
+      "ciphertext": {
+        "type": "signal-group-message",
+        "body": "base64-group-ciphertext"
+      }
+    }
+  ]
+}
+```
+
+Rules:
+
+- `sourceMessageId` must be a message the caller can access (thread participant or group member).
+- Cannot forward a deleted (tombstoned) message.
+- `targets` length: `1..20`.
+- Each target is processed independently. If one target fails, the others still succeed.
+- For `direct` targets: must include envelopes for every active recipient device (same rules as `POST /messages`).
+- For `group` targets: caller must be a group member. The `ciphertext` is the group-key-encrypted payload.
+- `idempotencyKey` is per-request. The server derives per-target keys internally (`{key}:0`, `{key}:1`, etc.).
+- Forwarded messages are marked with `forwarded: true` in the response.
+- Media attachments are cloned server-side — recipients can download them via the normal `GET /messages/media/:mediaId/download-url` flow.
+
+Response:
+
+```json
+{
+  "results": [
+    {
+      "targetType": "direct",
+      "targetId": "recipient-user-uuid",
+      "success": true,
+      "messageId": "new-message-uuid"
+    },
+    {
+      "targetType": "group",
+      "targetId": "group-uuid",
+      "success": false,
+      "error": "You are not a member of this group"
+    }
+  ]
+}
+```
+
+Mobile responsibilities:
+
+1. Fetch key bundles for each direct target before forwarding.
+2. Encrypt the forwarded message body separately for each target (the source message ciphertext is not reused).
+3. Check `results[].success` for each target. Show a partial-success UI if some targets failed.
+4. The forwarded message appears in the destination thread/group with `forwarded: true`. Render a "Forwarded" badge in the UI.
+5. Media downloads work identically to regular messages — no special handling needed.
+
 ### Fetch Pending Messages
 
 `GET /messages/pending?deviceId=<device-uuid>&after=<cursor>&limit=50`
