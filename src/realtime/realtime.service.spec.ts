@@ -16,7 +16,7 @@ describe('RealtimeService', () => {
     const config = { get: jest.fn().mockReturnValue(60) } as unknown as ConfigService;
     const service = new RealtimeService(prisma as unknown as PrismaService, config);
 
-    const result = await service.createSocketTicket({ userId: 'user-1', sessionId: 'session-1' }, 'device-1');
+    const result = await service.createSocketTicket({ userId: 'user-1', sessionId: 'session-1', role: 'USER' }, 'device-1');
 
     expect(result.ticket).toEqual(expect.any(String));
     expect(prisma.socketTicket.create).toHaveBeenCalledWith(

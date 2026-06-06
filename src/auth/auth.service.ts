@@ -4,6 +4,7 @@ import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthenticatedUser } from '../common/types/authenticated-user';
 import { maskPhone, normalizePhone, randomToken, sha256 } from '../common/utils/crypto.util';
+import { AccountSuspendedException } from '../moderation/exceptions/account-suspended.exception';
 import { RequestOtpDto } from './dto/request-otp.dto';
 import { VerifyOtpDto } from './dto/verify-otp.dto';
 import { OtpService } from './otp.service';
@@ -38,7 +39,12 @@ export class AuthService {
         phoneHash: sha256(phone),
         phoneMasked: maskPhone(phone),
       },
+      select: { id: true, status: true },
     });
+
+    if (user.status === 'SUSPENDED') {
+      await this.assertNotSuspended(user.id);
+    }
 
     return this.issueTokenPair(user.id);
   }
@@ -47,11 +53,15 @@ export class AuthService {
     const tokenHash = sha256(refreshToken);
     const session = await this.prisma.refreshToken.findUnique({
       where: { tokenHash },
-      select: { id: true, userId: true, expiresAt: true, revokedAt: true },
+      select: { id: true, userId: true, expiresAt: true, revokedAt: true, user: { select: { status: true } } },
     });
 
     if (!session || session.revokedAt || session.expiresAt <= new Date()) {
       throw new UnauthorizedException('Refresh token is invalid');
+    }
+
+    if (session.user.status === 'SUSPENDED') {
+      await this.assertNotSuspended(session.userId);
     }
 
     await this.prisma.refreshToken.update({
@@ -78,6 +88,20 @@ export class AuthService {
     await this.prisma.refreshToken.updateMany({
       where: { id: user.sessionId, userId: user.userId, revokedAt: null },
       data: { revokedAt: new Date() },
+    });
+  }
+
+  private async assertNotSuspended(userId: string): Promise<never> {
+    const suspension = await this.prisma.userSuspension.findFirst({
+      where: { userId, revokedAt: null },
+      orderBy: { suspendedAt: 'desc' },
+      select: { reason: true, suspendedAt: true, expiresAt: true },
+    });
+    throw new AccountSuspendedException({
+      reason: suspension?.reason ?? 'No reason provided',
+      suspendedAt: (suspension?.suspendedAt ?? new Date()).toISOString(),
+      expiresAt: suspension?.expiresAt ? suspension.expiresAt.toISOString() : null,
+      appealUrl: this.config.get<string>('SUSPENSION_APPEAL_URL') ?? null,
     });
   }
 

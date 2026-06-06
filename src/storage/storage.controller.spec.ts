@@ -1,5 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { BadRequestException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { StorageController } from './storage.controller';
 import { R2Service } from './r2.service';
@@ -18,6 +19,7 @@ describe('StorageController', () => {
   const mockUser: AuthenticatedUser = {
     userId: 'user-789',
     sessionId: 'session-456',
+    role: 'USER',
   };
 
   beforeEach(async () => {
@@ -37,6 +39,10 @@ describe('StorageController', () => {
         {
           provide: PrismaService,
           useValue: {},
+        },
+        {
+          provide: ConfigService,
+          useValue: { get: jest.fn() },
         },
       ],
     }).compile();

@@ -26,6 +26,10 @@ const mockMediaService = {
   cleanupMessageMedia: jest.fn().mockResolvedValue(undefined),
 } as unknown as MediaService;
 
+const mockAuditLogService = {
+  write: jest.fn().mockResolvedValue({ id: 'audit-1' }),
+} as unknown as import('../moderation/services/audit-log.service').AuditLogService;
+
 const mockFanoutQueue = {
   add: jest.fn().mockResolvedValue({ id: 'job-1' }),
 } as unknown as import('bullmq').Queue;
@@ -47,7 +51,7 @@ describe('MessagesService', () => {
       },
     };
     const events = { emit: jest.fn() } as unknown as EventEmitter2;
-    const service = new MessagesService(prisma as unknown as PrismaService, events, mockUnreadService, mockConfigService, mockPushService, mockMediaService, mockFanoutQueue);
+    const service = new MessagesService(prisma as unknown as PrismaService, events, mockUnreadService, mockConfigService, mockPushService, mockMediaService, mockAuditLogService, mockFanoutQueue);
 
     await expect(
       service.send('user-1', {
@@ -97,7 +101,7 @@ describe('MessagesService', () => {
       const tx = makeTx();
       const prisma = makePrisma(tx);
       const events = { emit: jest.fn() } as unknown as EventEmitter2;
-      const service = new MessagesService(prisma as unknown as PrismaService, events, mockUnreadService, mockConfigService, mockPushService, mockMediaService, mockFanoutQueue);
+      const service = new MessagesService(prisma as unknown as PrismaService, events, mockUnreadService, mockConfigService, mockPushService, mockMediaService, mockAuditLogService, mockFanoutQueue);
 
       const result = await service.send('user-1', {
         senderDeviceId: 'device-1',
@@ -148,6 +152,7 @@ describe('MessagesService', () => {
         mockConfigService,
         mockPushService,
         mediaService,
+        mockAuditLogService,
         mockFanoutQueue,
       );
 
@@ -192,6 +197,7 @@ describe('MessagesService', () => {
         mockConfigService,
         mockPushService,
         mediaService,
+        mockAuditLogService,
         mockFanoutQueue,
       );
 
@@ -230,7 +236,7 @@ describe('MessagesService', () => {
       const envelopes = Array.from({ length: 50 }, (_, i) => makeEnvelope(BigInt(i + 1)));
       const prisma = makePrisma(envelopes);
       const events = { emit: jest.fn() } as unknown as EventEmitter2;
-      const service = new MessagesService(prisma as unknown as PrismaService, events, mockUnreadService, mockConfigService, mockPushService, mockMediaService, mockFanoutQueue);
+      const service = new MessagesService(prisma as unknown as PrismaService, events, mockUnreadService, mockConfigService, mockPushService, mockMediaService, mockAuditLogService, mockFanoutQueue);
 
       const result = await service.getPending('user-1', 'device-1', undefined, 50);
 
@@ -245,7 +251,7 @@ describe('MessagesService', () => {
       const envelopes = [makeEnvelope(1n), makeEnvelope(2n)];
       const prisma = makePrisma(envelopes);
       const events = { emit: jest.fn() } as unknown as EventEmitter2;
-      const service = new MessagesService(prisma as unknown as PrismaService, events, mockUnreadService, mockConfigService, mockPushService, mockMediaService, mockFanoutQueue);
+      const service = new MessagesService(prisma as unknown as PrismaService, events, mockUnreadService, mockConfigService, mockPushService, mockMediaService, mockAuditLogService, mockFanoutQueue);
 
       const result = await service.getPending('user-1', 'device-1', undefined, 50);
 
@@ -256,7 +262,7 @@ describe('MessagesService', () => {
     it('returns hasMore false for empty result set', async () => {
       const prisma = makePrisma([]);
       const events = { emit: jest.fn() } as unknown as EventEmitter2;
-      const service = new MessagesService(prisma as unknown as PrismaService, events, mockUnreadService, mockConfigService, mockPushService, mockMediaService, mockFanoutQueue);
+      const service = new MessagesService(prisma as unknown as PrismaService, events, mockUnreadService, mockConfigService, mockPushService, mockMediaService, mockAuditLogService, mockFanoutQueue);
 
       const result = await service.getPending('user-1', 'device-1', undefined, 50);
 
@@ -267,7 +273,7 @@ describe('MessagesService', () => {
     it('uses after cursor to filter envelopes', async () => {
       const prisma = makePrisma([makeEnvelope(51n), makeEnvelope(52n)]);
       const events = { emit: jest.fn() } as unknown as EventEmitter2;
-      const service = new MessagesService(prisma as unknown as PrismaService, events, mockUnreadService, mockConfigService, mockPushService, mockMediaService, mockFanoutQueue);
+      const service = new MessagesService(prisma as unknown as PrismaService, events, mockUnreadService, mockConfigService, mockPushService, mockMediaService, mockAuditLogService, mockFanoutQueue);
 
       await service.getPending('user-1', 'device-1', '50', 50);
 
@@ -283,7 +289,7 @@ describe('MessagesService', () => {
     it('orders by envelopeSequence ascending', async () => {
       const prisma = makePrisma([]);
       const events = { emit: jest.fn() } as unknown as EventEmitter2;
-      const service = new MessagesService(prisma as unknown as PrismaService, events, mockUnreadService, mockConfigService, mockPushService, mockMediaService, mockFanoutQueue);
+      const service = new MessagesService(prisma as unknown as PrismaService, events, mockUnreadService, mockConfigService, mockPushService, mockMediaService, mockAuditLogService, mockFanoutQueue);
 
       await service.getPending('user-1', 'device-1', undefined, 50);
 
@@ -297,7 +303,7 @@ describe('MessagesService', () => {
     it('defaults limit to 50', async () => {
       const prisma = makePrisma([]);
       const events = { emit: jest.fn() } as unknown as EventEmitter2;
-      const service = new MessagesService(prisma as unknown as PrismaService, events, mockUnreadService, mockConfigService, mockPushService, mockMediaService, mockFanoutQueue);
+      const service = new MessagesService(prisma as unknown as PrismaService, events, mockUnreadService, mockConfigService, mockPushService, mockMediaService, mockAuditLogService, mockFanoutQueue);
 
       await service.getPending('user-1', 'device-1');
 
@@ -323,7 +329,7 @@ describe('MessagesService', () => {
     it('returns requiresFullReload when since is older than 14 days', async () => {
       const prisma = makePrisma([]);
       const events = { emit: jest.fn() } as unknown as EventEmitter2;
-      const service = new MessagesService(prisma as unknown as PrismaService, events, mockUnreadService, mockConfigService, mockPushService, mockMediaService, mockFanoutQueue);
+      const service = new MessagesService(prisma as unknown as PrismaService, events, mockUnreadService, mockConfigService, mockPushService, mockMediaService, mockAuditLogService, mockFanoutQueue);
 
       const oldSince = new Date(Date.now() - 15 * 24 * 60 * 60 * 1000).toISOString();
       const result = await service.sync('user-1', 'device-1', oldSince);
@@ -364,7 +370,7 @@ describe('MessagesService', () => {
       ];
       const prisma = makePrisma(envelopes, deletedMessages);
       const events = { emit: jest.fn() } as unknown as EventEmitter2;
-      const service = new MessagesService(prisma as unknown as PrismaService, events, mockUnreadService, mockConfigService, mockPushService, mockMediaService, mockFanoutQueue);
+      const service = new MessagesService(prisma as unknown as PrismaService, events, mockUnreadService, mockConfigService, mockPushService, mockMediaService, mockAuditLogService, mockFanoutQueue);
 
       const recentSince = new Date(Date.now() - 1 * 60 * 60 * 1000).toISOString();
       const result = await service.sync('user-1', 'device-1', recentSince);
@@ -379,7 +385,7 @@ describe('MessagesService', () => {
     it('caps limit at 500', async () => {
       const prisma = makePrisma([]);
       const events = { emit: jest.fn() } as unknown as EventEmitter2;
-      const service = new MessagesService(prisma as unknown as PrismaService, events, mockUnreadService, mockConfigService, mockPushService, mockMediaService, mockFanoutQueue);
+      const service = new MessagesService(prisma as unknown as PrismaService, events, mockUnreadService, mockConfigService, mockPushService, mockMediaService, mockAuditLogService, mockFanoutQueue);
 
       const recentSince = new Date(Date.now() - 1 * 60 * 60 * 1000).toISOString();
       await service.sync('user-1', 'device-1', recentSince, 1000);
@@ -409,7 +415,6 @@ describe('MessagesService', () => {
       };
       const tx = {
         message: { update: jest.fn().mockResolvedValue(tombstoned) },
-        messageAdminDeleteLog: { create: jest.fn().mockResolvedValue({}) },
       };
       const prisma = {
         device: { findFirst: jest.fn().mockResolvedValue({ id: 'admin-device', userId: 'admin-user', active: true }) },
@@ -421,7 +426,7 @@ describe('MessagesService', () => {
     };
 
     it('emits message.deleted.group with deletedByUserId set to the admin actor, not the message author', async () => {
-      const { prisma } = buildAdminDeletePrisma();
+      const { prisma, tx } = buildAdminDeletePrisma();
       const events = { emit: jest.fn() } as unknown as EventEmitter2;
       const service = new MessagesService(
         prisma as unknown as PrismaService,
@@ -430,6 +435,7 @@ describe('MessagesService', () => {
         mockConfigService,
         mockPushService,
         mockMediaService,
+        mockAuditLogService,
         mockFanoutQueue,
       );
 
@@ -447,6 +453,17 @@ describe('MessagesService', () => {
           deletedBy: 'ADMIN',
           deletedByUserId: 'admin-user',
         }),
+      );
+      expect(mockAuditLogService.write).toHaveBeenCalledWith(
+        expect.objectContaining({
+          actorUserId: 'admin-user',
+          action: 'MESSAGE_TOMBSTONE',
+          targetType: 'MESSAGE',
+          targetId: 'message-1',
+          reason: 'group_admin_delete',
+          metadata: { scope: 'group' },
+        }),
+        tx,
       );
     });
   });
@@ -523,6 +540,7 @@ describe('MessagesService', () => {
         mockConfigService,
         mockPushService,
         mediaService,
+        mockAuditLogService,
         mockFanoutQueue,
       );
 

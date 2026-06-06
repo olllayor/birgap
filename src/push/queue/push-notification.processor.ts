@@ -50,7 +50,12 @@ export class PushNotificationProcessor extends WorkerHost {
   ): Promise<void> {
     const deviceIds = [...new Set(envelopes.map((e) => e.recipientDeviceId))];
     const devices = await this.prisma.device.findMany({
-      where: { id: { in: deviceIds }, active: true, pushToken: { not: null } },
+      where: {
+        id: { in: deviceIds },
+        active: true,
+        pushToken: { not: null },
+        user: { status: 'ACTIVE' },
+      },
       select: { id: true, userId: true, pushPlatform: true },
     });
 
@@ -67,7 +72,12 @@ export class PushNotificationProcessor extends WorkerHost {
   ): Promise<void> {
     const deviceIds = [...new Set(envelopes.map((e) => e.recipientDeviceId))];
     const devices = await this.prisma.device.findMany({
-      where: { id: { in: deviceIds }, active: true, pushToken: { not: null } },
+      where: {
+        id: { in: deviceIds },
+        active: true,
+        pushToken: { not: null },
+        user: { status: 'ACTIVE' },
+      },
       select: { id: true, userId: true, pushPlatform: true },
     });
 
@@ -88,7 +98,12 @@ export class PushNotificationProcessor extends WorkerHost {
 
     const deviceIds = [...new Set(envelopes.map((e) => e.recipientDeviceId))];
     const devices = await this.prisma.device.findMany({
-      where: { id: { in: deviceIds }, active: true, pushToken: { not: null } },
+      where: {
+        id: { in: deviceIds },
+        active: true,
+        pushToken: { not: null },
+        user: { status: 'ACTIVE' },
+      },
       select: { id: true, userId: true, pushToken: true, pushPlatform: true },
     });
 
@@ -152,7 +167,12 @@ export class PushNotificationProcessor extends WorkerHost {
 
     const deviceIds = [...new Set(envelopes.map((e) => e.recipientDeviceId))];
     const devices = await this.prisma.device.findMany({
-      where: { id: { in: deviceIds }, active: true, pushToken: { not: null } },
+      where: {
+        id: { in: deviceIds },
+        active: true,
+        pushToken: { not: null },
+        user: { status: 'ACTIVE' },
+      },
       select: { id: true, userId: true, pushToken: true, pushPlatform: true },
     });
 

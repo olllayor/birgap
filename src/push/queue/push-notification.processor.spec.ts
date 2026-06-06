@@ -62,7 +62,12 @@ describe('PushNotificationProcessor', () => {
     await expect(processor.process(job)).resolves.toBeUndefined();
 
     expect(prisma.device.findMany).toHaveBeenCalledWith({
-      where: { id: { in: ['dev-1'] }, active: true, pushToken: { not: null } },
+      where: {
+        id: { in: ['dev-1'] },
+        active: true,
+        pushToken: { not: null },
+        user: { status: 'ACTIVE' },
+      },
       select: { id: true, userId: true, pushPlatform: true },
     });
   });

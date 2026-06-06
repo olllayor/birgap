@@ -36,4 +36,13 @@ export const envValidationSchema = Joi.object({
   ENABLE_MESSAGE_EDIT_DELETE_LIMIT: Joi.boolean().default(true),
   MEDIA_MAX_ATTACHMENTS_PER_MESSAGE: Joi.number().integer().min(1).default(10),
   MEDIA_PENDING_TIMEOUT_HOURS: Joi.number().integer().min(1).default(24),
+  ADMIN_PHONE_HASHES: Joi.string().allow('').optional(),
+  SUSPENSION_APPEAL_URL: Joi.string().uri().optional(),
+  REPORTS_DAILY_LIMIT: Joi.number().integer().min(1).default(50),
+  REPORTS_COLLUSION_THRESHOLD: Joi.number().integer().min(1).default(10),
+  REPORTS_COLLUSION_WINDOW_HOURS: Joi.number().integer().min(1).default(1),
+  REPORTS_PER_IP_PER_MINUTE: Joi.number().integer().min(1).default(10),
+  TRUST_PROXY_HOPS: Joi.number().integer().min(0).max(5).default(0),
+  REPORT_RETENTION_DAYS: Joi.number().integer().min(30).default(365),
+  DAILY_METRICS_RETENTION_DAYS: Joi.number().integer().min(30).default(365),
 });

@@ -1,4 +1,5 @@
 import { Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { Processor, WorkerHost, OnWorkerEvent } from '@nestjs/bullmq';
 import { Job } from 'bullmq';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -13,6 +14,7 @@ export class PruneProcessor extends WorkerHost {
   constructor(
     private readonly prisma: PrismaService,
     private readonly queueMetrics: QueueMetrics,
+    private readonly config: ConfigService,
   ) {
     super();
   }
@@ -21,6 +23,10 @@ export class PruneProcessor extends WorkerHost {
     this.logger.log('Starting daily database pruning...');
     const now = new Date();
     const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const reportRetentionDays = this.config.get<number>('REPORT_RETENTION_DAYS', 365);
+    const metricsRetentionDays = this.config.get<number>('DAILY_METRICS_RETENTION_DAYS', 365);
+    const reportCutoff = new Date(Date.now() - reportRetentionDays * 24 * 60 * 60 * 1000);
+    const metricsCutoff = new Date(Date.now() - metricsRetentionDays * 24 * 60 * 60 * 1000);
 
     await this.prisma.$transaction(async (tx) => {
       const tokensResult = await tx.refreshToken.deleteMany({
@@ -56,12 +62,27 @@ export class PruneProcessor extends WorkerHost {
         },
       });
 
+      const reportsResult = await tx.report.deleteMany({
+        where: {
+          createdAt: { lt: reportCutoff },
+        },
+      });
+
+      const metricsResult = await tx.dailyMetric.deleteMany({
+        where: {
+          date: { lt: metricsCutoff },
+        },
+      });
+
       this.logger.log(
         `Pruning completed successfully: ` +
           `Pruned ${tokensResult.count} refresh tokens, ` +
           `${ticketsResult.count} socket tickets, ` +
-          `${otpsResult.count} OTPs, and ` +
-          `${smsResult.count} SMS reports.`,
+          `${otpsResult.count} OTPs, ` +
+          `${smsResult.count} SMS reports, ` +
+          `${reportsResult.count} reports (>${reportRetentionDays}d), and ` +
+          `${metricsResult.count} daily metrics (>${metricsRetentionDays}d). ` +
+          `Note: AdminAuditLog is NEVER pruned.`,
       );
     });
   }
