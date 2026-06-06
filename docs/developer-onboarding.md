@@ -182,16 +182,19 @@ BirGap/
 │   ├── storage/                 # Cloudflare R2/S3 integration
 │   ├── redis/                   # Redis connection service
 │   ├── prisma/                  # Prisma database service
+│   ├── moderation/              # Admin & moderation dashboard (reports, tombstones, suspensions, audit log, analytics)
 │   └── common/                  # Shared utilities
 │       ├── config/              # Environment validation
-│       ├── guards/              # JWT authentication guard
-│       ├── decorators/          # Custom decorators
+│       ├── guards/              # JWT auth guard (with suspension check), role guard
+│       ├── decorators/          # Custom decorators (@CurrentUser, @RequireRole)
 │       ├── types/               # TypeScript types
 │       ├── utils/               # Utility functions
+│       ├── tasks/               # Scheduled jobs (prune, media cleanup)
 │       └── filters/             # Exception filters
 ├── prisma/
 │   ├── schema.prisma            # Database schema
 │   ├── migrations/              # Migration files
+│   ├── scripts/                 # One-off scripts (admin:promote, admin:backfill-audit, ...)
 │   └── seed.ts                  # Development seed data
 ├── docs/                        # Documentation
 ├── test/                        # Test files

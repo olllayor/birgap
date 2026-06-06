@@ -1,4 +1,4 @@
-import { Logger, OnModuleDestroy } from '@nestjs/common';
+import { Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { OnEvent } from '@nestjs/event-emitter';
 import {
   ConnectedSocket,
@@ -9,12 +9,15 @@ import {
   WebSocketGateway,
   WebSocketServer,
 } from '@nestjs/websockets';
+import { Redis } from 'ioredis';
 import { Server, Socket } from 'socket.io';
 import { PushService } from '../push/push.service';
 import { RedisService } from '../redis/redis.service';
 import { TypingDto } from './dto/typing.dto';
 import { RealtimeService } from './realtime.service';
 import { PrismaService } from '../prisma/prisma.service';
+
+const REALTIME_USER_KICKED_CHANNEL = 'realtime:user-kicked';
 
 type AuthenticatedSocket = Socket & {
   data: {
@@ -29,9 +32,10 @@ type AuthenticatedSocket = Socket & {
   pingInterval: 25000,
   pingTimeout: 10000,
 })
-export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect, OnModuleDestroy {
+export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect, OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(RealtimeGateway.name);
   private isShuttingDown = false;
+  private kickSubscriber: Redis | null = null;
 
   @WebSocketServer()
   server!: Server;
@@ -42,6 +46,44 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
     private readonly push: PushService,
     private readonly prisma: PrismaService,
   ) {}
+
+  async onModuleInit() {
+    this.kickSubscriber = this.redis.client.duplicate();
+    this.kickSubscriber.on('error', (error) => {
+      this.logger.warn(`Kick subscriber error: ${error.message}`);
+    });
+    await this.kickSubscriber.subscribe(REALTIME_USER_KICKED_CHANNEL);
+    this.kickSubscriber.on('message', (channel, raw) => {
+      if (channel !== REALTIME_USER_KICKED_CHANNEL) {
+        return;
+      }
+      this.handleUserKicked(raw).catch((error) => {
+        this.logger.warn(`Failed to handle user-kicked: ${error.message}`);
+      });
+    });
+    this.logger.log(`Subscribed to ${REALTIME_USER_KICKED_CHANNEL}`);
+  }
+
+  private async handleUserKicked(raw: string) {
+    let payload: { userId?: string; reason?: string };
+    try {
+      payload = JSON.parse(raw);
+    } catch {
+      return;
+    }
+    if (!payload.userId) {
+      return;
+    }
+    const room = `user:${payload.userId}`;
+    const sockets = await this.server.in(room).fetchSockets();
+    for (const sock of sockets) {
+      sock.emit('user.kicked', { reason: payload.reason ?? 'KICKED' });
+      sock.disconnect(true);
+    }
+    if (sockets.length > 0) {
+      this.logger.log(`Kicked ${sockets.length} socket(s) for user ${payload.userId} (${payload.reason ?? 'KICKED'})`);
+    }
+  }
 
   async handleConnection(client: AuthenticatedSocket) {
     if (this.isShuttingDown) {
@@ -287,6 +329,53 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
     }
   }
 
+  @OnEvent('message.tombstoned.platform')
+  async onPlatformTombstone(payload: {
+    messageId: string;
+    threadId: string | null;
+    groupId: string | null;
+    senderUserId: string;
+    tombstonedBy: string;
+    at: string;
+  }) {
+    const eventPayload = {
+      messageId: payload.messageId,
+      threadId: payload.threadId,
+      groupId: payload.groupId,
+      senderUserId: payload.senderUserId,
+      deletedAt: payload.at,
+    };
+    if (payload.groupId) {
+      let memberIds = await this.redis.getGroupMemberIds(payload.groupId);
+      if (!memberIds) {
+        const members = await this.prisma.groupMember.findMany({
+          where: { groupId: payload.groupId },
+          select: { userId: true },
+        });
+        memberIds = members.map((m) => m.userId);
+        this.redis.setGroupMemberIds(payload.groupId, memberIds).catch(() => {});
+      }
+      for (const userId of memberIds) {
+        if (userId !== payload.tombstonedBy) {
+          this.server.to(`user:${userId}`).emit('message.deleted', eventPayload);
+        }
+      }
+      return;
+    }
+    if (payload.threadId) {
+      const thread = await this.prisma.directThread.findUnique({
+        where: { id: payload.threadId },
+        select: { userAId: true, userBId: true },
+      });
+      if (thread) {
+        const targetUserIds = [thread.userAId, thread.userBId].filter((id) => id !== payload.tombstonedBy);
+        for (const userId of targetUserIds) {
+          this.server.to(`user:${userId}`).emit('message.deleted', eventPayload);
+        }
+      }
+    }
+  }
+
   @OnEvent('message.edited')
   onMessageEdited(payload: {
     messageId: string;
@@ -351,6 +440,11 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
   async onModuleDestroy() {
     this.isShuttingDown = true;
     this.logger.log('Shutting down WebSocket gateway, notifying connected clients...');
+
+    if (this.kickSubscriber) {
+      await this.kickSubscriber.quit().catch(() => undefined);
+      this.kickSubscriber = null;
+    }
 
     this.server.emit('server.shutdown', { message: 'Server is shutting down, please reconnect' });
 

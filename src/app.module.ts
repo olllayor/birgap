@@ -17,6 +17,7 @@ import { DevicesModule } from './devices/devices.module';
 import { envValidationSchema } from './common/config/env.validation';
 import { HealthModule } from './health/health.module';
 import { MessagesModule } from './messages/messages.module';
+import { ModerationModule } from './moderation/moderation.module';
 import { PreKeysModule } from './prekeys/prekeys.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { PushModule } from './push/push.module';
@@ -129,6 +130,7 @@ import { ReactionsModule } from './reactions/reactions.module';
     QueuesModule,
     UnreadModule,
     ReactionsModule,
+    ModerationModule,
   ],
   providers: [
     PruneService,

@@ -12,6 +12,7 @@ import { Queue } from 'bullmq';
 import { PrismaService } from '../prisma/prisma.service';
 import { PushService } from '../push/push.service';
 import { UnreadService } from '../unread/unread.service';
+import { AuditLogService } from '../moderation/services/audit-log.service';
 import { AckMessageDto } from './dto/ack-message.dto';
 import { DeleteMessageDto, DeleteMessageScope } from './dto/delete-message.dto';
 import { EditMessageDto } from './dto/edit-message.dto';
@@ -30,6 +31,7 @@ export class MessagesService {
     private readonly config: ConfigService,
     private readonly push: PushService,
     private readonly mediaService: MediaService,
+    private readonly auditLog: AuditLogService,
     @InjectQueue('group-fanout') private readonly fanoutQueue: Queue,
   ) {}
 
@@ -893,12 +895,17 @@ export class MessagesService {
       });
 
       if (deletedBy === 'ADMIN') {
-        await tx.messageAdminDeleteLog.create({
-          data: {
-            messageId,
-            adminUserId: userId,
+        await this.auditLog.write(
+          {
+            actorUserId: userId,
+            action: 'MESSAGE_TOMBSTONE',
+            targetType: 'MESSAGE',
+            targetId: messageId,
+            reason: 'group_admin_delete',
+            metadata: { scope: 'group' },
           },
-        });
+          tx,
+        );
       }
 
       return tombstoned;

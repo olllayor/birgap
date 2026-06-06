@@ -21,6 +21,11 @@ async function bootstrap() {
 
   const isProd = config.get('NODE_ENV') === 'production';
 
+  const trustProxyHops = config.get<number>('TRUST_PROXY_HOPS', 0);
+  if (trustProxyHops > 0) {
+    app.set('trust proxy', trustProxyHops);
+  }
+
   app.use(
     helmet(
       isProd

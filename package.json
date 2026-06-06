@@ -17,7 +17,10 @@
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:deploy": "prisma migrate deploy",
-    "prisma:seed": "tsx prisma/seed.ts"
+    "prisma:seed": "tsx prisma/seed.ts",
+    "admin:promote": "tsx prisma/scripts/admin.ts promote",
+    "admin:demote": "tsx prisma/scripts/admin.ts demote",
+    "admin:backfill-audit": "tsx prisma/scripts/backfill-admin-audit-log.ts"
   },
   "dependencies": {
     "@apollo/server": "^4.13.0",

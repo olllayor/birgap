@@ -205,34 +205,69 @@ if (!device) {
 
 ### Endpoint Authorization Matrix
 
-| Endpoint | Auth Required | Device Validation |
-|----------|---------------|-------------------|
-| `POST /auth/otp/request` | No | No |
-| `POST /auth/otp/verify` | No | No |
-| `POST /auth/refresh` | No (uses refresh token) | No |
-| `POST /auth/logout` | Yes (JWT) | Current session |
-| `POST /devices/register` | Yes (JWT) | User owns device |
-| `GET /devices` | Yes (JWT) | Current user only |
-| `DELETE /devices/:id` | Yes (JWT) | User owns device |
-| `POST /devices/:id/prekeys/refill` | Yes (JWT) | User owns device |
-| `PUT /devices/:id/signed-prekey` | Yes (JWT) | User owns device |
-| `GET /users/:id/key-bundles` | Yes (JWT) | Any user |
-| `POST /messages` | Yes (JWT) | Sender device owned |
-| `GET /messages/pending` | Yes (JWT) | Device owned by user |
-| `POST /messages/:id/ack` | Yes (JWT) | Device owned by user |
-| `POST /realtime/token` | Yes (JWT) | Device owned by user |
-| `PUT /backups/current` | Yes (JWT) | Current user only |
-| `GET /backups/current` | Yes (JWT) | Current user only |
-| `GET /health` | No | No |
+| Endpoint | Auth Required | Role Required | Device Validation |
+|----------|---------------|---------------|-------------------|
+| `POST /auth/otp/request` | No | — | No |
+| `POST /auth/otp/verify` | No | — | No |
+| `POST /auth/refresh` | No (uses refresh token) | — | No |
+| `POST /auth/logout` | Yes (JWT) | any | Current session |
+| `POST /devices/register` | Yes (JWT) | any | User owns device |
+| `GET /devices` | Yes (JWT) | any | Current user only |
+| `DELETE /devices/:id` | Yes (JWT) | any | User owns device |
+| `POST /devices/:id/prekeys/refill` | Yes (JWT) | any | User owns device |
+| `PUT /devices/:id/signed-prekey` | Yes (JWT) | any | User owns device |
+| `GET /users/:id/key-bundles` | Yes (JWT) | any | Any user |
+| `POST /messages` | Yes (JWT) | any | Sender device owned |
+| `GET /messages/pending` | Yes (JWT) | any | Device owned by user |
+| `POST /messages/:id/ack` | Yes (JWT) | any | Device owned by user |
+| `POST /realtime/token` | Yes (JWT) | any | Device owned by user |
+| `PUT /backups/current` | Yes (JWT) | any | Current user only |
+| `GET /backups/current` | Yes (JWT) | any | Current user only |
+| `GET /health` | No | — | No |
+| `POST /reports` | Yes (JWT) | any | Sender device owned |
+| `GET /reports/mine` | Yes (JWT) | any | Current user only |
+| `GET /admin/me` | Yes (JWT) | any | — |
+| `GET /admin/reports` | Yes (JWT) | MODERATOR or ADMIN | — |
+| `GET /admin/reports/:id` | Yes (JWT) | MODERATOR or ADMIN | — |
+| `POST /admin/reports/:id/review` | Yes (JWT) | MODERATOR or ADMIN | — |
+| `POST /admin/reports/:id/dismiss` | Yes (JWT) | MODERATOR or ADMIN | — |
+| `POST /admin/messages/:id/tombstone` | Yes (JWT) | MODERATOR or ADMIN | — |
+| `POST /admin/messages/:id/untombstone` | Yes (JWT) | **ADMIN only** | — |
+| `GET /admin/users` | Yes (JWT) | ADMIN | — |
+| `GET /admin/users/:id` | Yes (JWT) | ADMIN | — |
+| `POST /admin/users/:id/suspend` | Yes (JWT) | **ADMIN only** | — |
+| `POST /admin/users/:id/unsuspend` | Yes (JWT) | **ADMIN only** | — |
+| `GET /admin/users/:id/suspensions` | Yes (JWT) | ADMIN | — |
+| `PATCH /admin/users/:id/role` | Yes (JWT) | **ADMIN only** | — |
+| `POST /admin/users/:id/strikes/reset` | Yes (JWT) | **ADMIN only** | — |
+| `GET /admin/analytics` | Yes (JWT) | MODERATOR or ADMIN | — |
+| `POST /admin/analytics/rollup` | Yes (JWT) | **ADMIN only** | — |
+| `GET /admin/audit-log` | Yes (JWT) | **ADMIN only** | — |
+
+Role enforcement is layered: the `AdminRoleGuard` reads `@RequireRole(UserRole.X)` metadata on the handler and rejects with `403 Forbidden` if the JWT subject's role is below the requirement. The service layer adds a second cross-check (e.g. "you cannot suspend an admin") that runs even when the guard passes.
+
+### Account Suspension Semantics
+
+`User.status` is denormalized for the fast JWT-guard check; `UserSuspension` is the source-of-truth history.
+
+- On suspend, the suspended user's `status` is flipped to `SUSPENDED`, all unexpired `RefreshToken`s are revoked, and a `UserSuspension` row is created (with `expiresAt` for timed suspensions, `null` for permanent).
+- Subsequent REST calls hit `JwtAuthGuard` first; if `user.status === 'SUSPENDED'`, the guard throws `AccountSuspendedException` with a structured 403 body (see `api-reference.md` → Account Suspension Response Shape) before any controller code runs.
+- Realtime eviction is via a Redis pub/sub channel `realtime:user-kicked` so a suspension on one node disconnects the user on every node. See [WebSocket Events Contract](./websocket-events.md) → Forced Disconnect.
+- Auto-reactivation: the `SuspensionReactivationService` cron at 00:45 UTC flips `User.status` back to `ACTIVE` when `expiresAt` is in the past, writes `AdminAuditLog(USER_UNSUSPEND, actorUserId=null, metadata.source='auto-reactivation')`. Manual unsuspension does the same thing but with `actorUserId` set to the admin.
+- Push suppression: `PushNotificationProcessor` filters `Device.user.status = 'ACTIVE'` on all device queries, so suspended recipients don't get push wakeups for messages that are already in their mailbox (they see them when they come back).
 
 ## Rate Limiting
 
 | Scope | Limit | Window | Purpose |
 |-------|-------|--------|---------|
-| Default | 60 requests | 60 seconds | General API protection |
-| Auth | 5 requests | 60 seconds | OTP brute-force prevention |
+| Default | 60 requests | 60 seconds | General API protection (ThrottlerModule) |
+| Auth | 5 requests | 60 seconds | OTP brute-force prevention (ThrottlerModule) |
 | OTP cooldown | 1 request | 120 seconds | Per-phone resend cooldown |
 | OTP attempts | 5 failed | 900 seconds | Per-phone lockout threshold |
+| Reports, per user | 50 reports | 1 day | USER only; prevents one user flooding the queue (Redis `reports:daily:{userId}:{yyyymmdd}`) |
+| Reports, per IP | 10 reports | 1 minute | USER only; prevents an attacker rotating accounts to file many reports against one victim (Redis `reports:ip:{ip}:{yyyyMMddHHmm}`) |
+
+The two report limits are checked in `ReportsService.create`. The IP check is skipped when `req.ip` is unavailable; in production behind a load balancer, set `TRUST_PROXY_HOPS` to the number of trusted proxy hops so `req.ip` resolves to the client IP. **Never set `TRUST_PROXY_HOPS` higher than the actual hop count** — a too-high value would let an attacker spoof the IP via `X-Forwarded-For` and bypass the limit.
 
 ## Input Validation
 
@@ -412,6 +447,56 @@ Server Workflow:
 - Phone numbers (only hashes)
 - Refresh token values (only hashes)
 
+## Admin Audit Log
+
+`AdminAuditLog` is the accountability surface for every moderation action. It is **append-only**: no `PATCH` or `DELETE` endpoint exists, and the daily prune job skips it. The retention policy is "keep forever" — the table is small relative to messages, and audit history is the one thing you most want to keep when something goes wrong.
+
+### What's recorded
+
+| `action` | `targetType` | Triggered by | Notable `metadata` |
+|----------|--------------|--------------|--------------------|
+| `MESSAGE_TOMBSTONE` | `MESSAGE` | `POST /admin/messages/:id/tombstone` (mod tombstone); also the group-admin tombstone path in `MessagesService.delete` | `scope='platform' \| 'group'`, `reportId`, `cascadeFrom='USER_SUSPEND'` |
+| `MESSAGE_UNTOMBSTONE` | `MESSAGE` | `POST /admin/messages/:id/untombstone` (ADMIN only) | — |
+| `USER_SUSPEND` | `USER` | `POST /admin/users/:id/suspend` | `suspensionId`, `expiresAt`, `tombstonedMessageCount`, `reportId` |
+| `USER_UNSUSPEND` | `USER` | `POST /admin/users/:id/unsuspend` (manual) **or** the auto-reactivation cron | Manual: `suspensionId`. Auto: `source='auto-reactivation'`, `suspensionId`, `expiresAt`. `actorUserId` is `null` for auto. |
+| `REPORT_DISMISS` | `REPORT` | `POST /admin/reports/:id/dismiss` | `reason` carries the moderator's justification |
+| `REPORT_REVIEW_START` | `REPORT` | `POST /admin/reports/:id/review` | — |
+| `ROLE_PROMOTE` / `ROLE_DEMOTE` | `USER` | `PATCH /admin/users/:id/role` | `from`, `to` |
+| `METRICS_ROLLUP` | `USER` (the actor) | `POST /admin/analytics/rollup` | `date`, `written` (row count) |
+| `STRIKE_RESET` | `USER` | `POST /admin/users/:id/strikes/reset` | `previousCount` |
+
+`actorUserId` is `null` for system writes:
+- Env-var bootstrap (`AdminBootstrapService` on app start, `metadata.source='env'`)
+- CLI scripts (`pnpm admin:promote` / `admin:demote`, `metadata.source='cli'`)
+- Auto-reactivation cron (`metadata.source='auto-reactivation'`)
+
+`metadata.source='legacy'` is reserved for the one-time backfill of pre-moderation `MessageAdminDeleteLog` rows (see `prisma/scripts/backfill-admin-audit-log.ts`).
+
+### What is NEVER recorded
+
+Per the zero-knowledge model, the admin audit log never sees:
+- Message ciphertext
+- Message plaintext or media content
+- Per-device `envelopes` (only the message id and metadata)
+
+`GET /admin/reports/:id` returns a `message` projection with `{id, senderUserId, createdAt, threadId, groupId, deletedAt}` — no `envelopes`, no `ciphertext`. Tombstoning is a metadata mutation (`Message.deletedAt = now()`), not a content review.
+
+### Read access
+
+`GET /admin/audit-log` is **ADMIN only**. `MODERATOR` cannot read the audit log, even rows they themselves created. This keeps the read surface as narrow as the privilege tier. Operators needing read access in production should use a separate read-only DB role that can `SELECT` from `AdminAuditLog` but cannot `INSERT`, `UPDATE`, or `DELETE`.
+
+### Operational hardening (DBA, out of band)
+
+After running the moderation foundation migration, the DBA should:
+
+```sql
+REVOKE INSERT, UPDATE, DELETE ON "AdminAuditLog" FROM <app_role>;
+-- Application retains SELECT + INSERT only.
+-- INSERT-only on AdminAuditLog should be enforced by grant.
+```
+
+The app uses Prisma, so an attacker who gets app-level RCE cannot `UPDATE` or `DELETE` audit rows because the DB role doesn't have the grant. The application still has `INSERT` because that's the only legitimate write path.
+
 ## Future Security Enhancements
 
 - [ ] Certificate pinning for mobile clients
@@ -424,3 +509,7 @@ Server Workflow:
 - [ ] SMS provider fallback (secondary provider on failure)
 - [ ] JWT key rotation with multiple signing keys
 - [ ] Device fingerprinting for anomaly detection
+- [ ] Strike auto-policy (e.g. "3 strikes in 90 days → 7-day auto-suspend")
+- [ ] GIN index on `AdminAuditLog.metadata` for free-text ops search
+- [ ] User-facing appeal endpoint (`POST /auth/appeal` → queues for admin review)
+- [ ] Per-IP ThrottlerModule tier for /reports (alongside the in-service check)

@@ -63,6 +63,27 @@ R2_SECRET_ACCESS_KEY=<secret-key>
 R2_BUCKET_NAME=birgap-backups
 R2_PRESIGNED_PUT_TTL_SECONDS=900
 R2_PRESIGNED_GET_TTL_SECONDS=300
+
+# Moderation / Admin Dashboard
+# Comma-separated SHA-256 hashes of E.164 phone numbers. Each matching user is
+# promoted to ADMIN on app start. Idempotent. Empty string disables.
+ADMIN_PHONE_HASHES=
+# Public URL for the "appeal suspension" page, surfaced in the 403 body when a
+# suspended user hits any endpoint. Omit if you don't have one.
+SUSPENSION_APPEAL_URL=https://example.com/appeal
+# Per-user report cap, per UTC day. USER only; MOD/ADMIN exempt.
+REPORTS_DAILY_LIMIT=50
+# Per-client-IP report cap, per UTC minute. USER only. Set TRUST_PROXY_HOPS
+# below to your actual hop count so req.ip is the real client IP behind a load
+# balancer. NEVER set TRUST_PROXY_HOPS higher than the real hop count.
+REPORTS_PER_IP_PER_MINUTE=10
+REPORTS_COLLUSION_THRESHOLD=10
+REPORTS_COLLUSION_WINDOW_HOURS=1
+# Prune retention (days). AdminAuditLog is NEVER pruned.
+REPORT_RETENTION_DAYS=365
+DAILY_METRICS_RETENTION_DAYS=365
+# Number of trusted reverse-proxy hops. 0 means do NOT trust X-Forwarded-For.
+TRUST_PROXY_HOPS=1
 ```
 
 ### Security Checklist
@@ -77,6 +98,9 @@ R2_PRESIGNED_GET_TTL_SECONDS=300
 - [ ] Configure R2 bucket with proper permissions
 - [ ] Set up HTTPS/TLS termination
 - [ ] Enable firewall rules (only expose necessary ports)
+- [ ] Bootstrap at least one admin via `ADMIN_PHONE_HASHES` **or** `pnpm admin:promote`
+- [ ] Set `TRUST_PROXY_HOPS` to the actual number of trusted reverse-proxy hops
+- [ ] Run the DBA hardening: `REVOKE INSERT, UPDATE, DELETE ON "AdminAuditLog" FROM <app_role>`
 
 ## Docker Deployment
 
@@ -298,6 +322,42 @@ pnpm prisma:deploy
 # Verify migration
 npx prisma migrate status
 ```
+
+### Moderation Module Migration Order
+
+The moderation module deploys as four additive migrations that must be applied in order, with a one-time backfill script between migration 1 and migration 2:
+
+```bash
+# 1. Apply migration A — additive only (new tables, new enums, User.role)
+pnpm prisma:deploy
+# New code starts writing to AdminAuditLog; old code keeps writing to MessageAdminDeleteLog.
+
+# 2. Backfill legacy rows (idempotent, re-runnable)
+pnpm admin:backfill-audit
+# Verifies every MessageAdminDeleteLog row is mirrored into AdminAuditLog
+# with metadata.source='legacy' and metadata.originalId=<legacy row id>.
+
+# 3. Apply migration B — drops MessageAdminDeleteLog
+pnpm prisma:deploy
+# Code path in messages.service.ts:895-902 now writes only to AdminAuditLog.
+
+# 4. Apply migration C — adds 'METRICS_ROLLUP' to AdminAuditAction
+pnpm prisma:deploy
+# Online: ALTER TYPE ... ADD VALUE does not rewrite the table.
+
+# 5. Apply migration D — User.strikeCount, User.lastStrikeAt, 'STRIKE_RESET'
+pnpm prisma:deploy
+```
+
+**DBA hardening step (manual, after the migrations are applied):**
+
+```sql
+REVOKE INSERT, UPDATE, DELETE ON "AdminAuditLog" FROM <app_role>;
+-- App retains SELECT + INSERT only. SELECT for /admin/audit-log read,
+-- INSERT for AuditLogService.write. No application code can UPDATE or DELETE.
+```
+
+This is a defense-in-depth measure: even with app-level RCE, an attacker cannot tamper with the audit log because the DB role lacks the grant.
 
 ### Connection Pooling
 

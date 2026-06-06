@@ -12,6 +12,63 @@ enum UserStatus {
   SUSPENDED
 }
 
+enum UserRole {
+  USER
+  MODERATOR
+  ADMIN
+}
+
+enum ReportReason {
+  SPAM
+  HARASSMENT
+  HATE_SPEECH
+  SEXUAL_CONTENT
+  VIOLENCE
+  IMPERSONATION
+  OTHER
+}
+
+enum ReportStatus {
+  OPEN
+  IN_REVIEW
+  CLOSED
+}
+
+enum ReportResolution {
+  DISMISSED
+  AUTO_CLOSED_TOMBSTONED
+  AUTO_CLOSED_SUSPENDED
+}
+
+enum AdminAuditAction {
+  MESSAGE_TOMBSTONE
+  MESSAGE_UNTOMBSTONE
+  USER_SUSPEND
+  USER_UNSUSPEND
+  REPORT_DISMISS
+  REPORT_REVIEW_START
+  ROLE_PROMOTE
+  ROLE_DEMOTE
+  METRICS_ROLLUP
+  STRIKE_RESET
+}
+
+enum AdminAuditTargetType {
+  MESSAGE
+  USER
+  REPORT
+}
+
+enum DailyMetricKind {
+  MESSAGES_SENT_DIRECT
+  MESSAGES_SENT_GROUP
+  DAU
+  NEW_USERS
+  REPORTS_OPENED
+  REPORTS_RESOLVED
+  USERS_SUSPENDED
+}
+
 enum OtpStatus {
   UNUSED
   USED
@@ -69,6 +126,7 @@ model User {
   phoneHash   String     @unique
   phoneMasked String?
   status      UserStatus @default(ACTIVE)
+  role        UserRole   @default(USER)
   createdAt   DateTime   @default(now())
   updatedAt   DateTime   @updatedAt
 
@@ -76,6 +134,8 @@ model User {
   profileAvatarUrl  String?
   encryptedProfile  Json?
   profileKeyHash    String?
+  strikeCount       Int         @default(0)
+  lastStrikeAt      DateTime?
 
   devices         Device[]
   refreshTokens   RefreshToken[]
@@ -86,6 +146,12 @@ model User {
   groupMembers    GroupMember[]
   reactions       MessageReaction[]
   media           MessageMedia[]
+  filedReports    Report[]         @relation("ReportFiler")
+  suspensionsAsTarget  UserSuspension[] @relation("SuspensionTarget")
+  suspensionsAsActor   UserSuspension[] @relation("SuspensionActor")
+  suspensionsAsRevoker UserSuspension[] @relation("SuspensionRevoker")
+
+  @@index([role])
 }
 
 model Device {
@@ -180,7 +246,7 @@ model Message {
   replies      Message[]        @relation("MessageReplies")
   envelopes    MessageEnvelope[]
   reactions    MessageReaction[]
-  adminDeletes MessageAdminDeleteLog[]
+  reports      Report[]
   media        MessageMedia[]
 
   @@unique([senderDeviceId, idempotencyKey])
@@ -348,18 +414,6 @@ model HiddenMessage {
   @@id([userId, messageId])
 }
 
-model MessageAdminDeleteLog {
-  id          String   @id @default(uuid()) @db.Uuid
-  messageId   String   @db.Uuid
-  adminUserId String   @db.Uuid
-  deletedAt   DateTime @default(now())
-
-  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
-
-  @@index([messageId])
-  @@index([adminUserId])
-}
-
 model MessageReaction {
   id        String   @id @default(uuid()) @db.Uuid
   messageId String   @db.Uuid
@@ -372,4 +426,76 @@ model MessageReaction {
 
   @@unique([userId, messageId])
   @@index([messageId])
+}
+
+model Report {
+  id              String           @id @default(uuid()) @db.Uuid
+  reporterUserId  String           @db.Uuid
+  messageId       String           @db.Uuid
+  reason          ReportReason
+  freeText        String?
+  status          ReportStatus     @default(OPEN)
+  resolution      ReportResolution?
+  reviewedByUserId String?         @db.Uuid
+  reviewedAt      DateTime?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  reporter User    @relation("ReportFiler", fields: [reporterUserId], references: [id], onDelete: Cascade)
+  message  Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@unique([reporterUserId, messageId])
+  @@index([status, createdAt])
+  @@index([messageId])
+  @@index([reporterUserId, createdAt])
+  @@index([reviewedByUserId])
+}
+
+model UserSuspension {
+  id                String    @id @default(uuid()) @db.Uuid
+  userId            String    @db.Uuid
+  suspendedByUserId String    @db.Uuid
+  reason            String
+  suspendedAt       DateTime  @default(now())
+  expiresAt         DateTime?
+  revokedAt         DateTime?
+  revokedByUserId   String?   @db.Uuid
+  revokeReason      String?
+
+  user            User  @relation("SuspensionTarget", fields: [userId], references: [id], onDelete: Cascade)
+  suspendedBy     User  @relation("SuspensionActor",  fields: [suspendedByUserId], references: [id], onDelete: Restrict)
+  revokedBy       User? @relation("SuspensionRevoker", fields: [revokedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([userId, revokedAt])
+  @@index([suspendedByUserId])
+  @@index([expiresAt])
+}
+
+model AdminAuditLog {
+  id           String              @id @default(uuid()) @db.Uuid
+  actorUserId  String?             @db.Uuid
+  action       AdminAuditAction
+  targetType   AdminAuditTargetType
+  targetId     String              @db.Uuid
+  reason       String?
+  metadata     Json?
+  createdAt    DateTime            @default(now())
+
+  @@index([actorUserId, createdAt])
+  @@index([targetType, targetId])
+  @@index([action, createdAt])
+  @@index([createdAt])
+}
+
+model DailyMetric {
+  id        String           @id @default(uuid()) @db.Uuid
+  date      DateTime         @db.Date
+  kind      DailyMetricKind
+  dimension String?
+  value     Int
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+
+  @@unique([date, kind, dimension])
+  @@index([kind, date])
 }
