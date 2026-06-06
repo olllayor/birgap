@@ -461,6 +461,7 @@ POST /messages
   "senderDeviceId": "sender-device-uuid",
   "recipientUserId": "recipient-user-uuid",
   "idempotencyKey": "client-generated-unique-key",
+  "contentType": "TEXT | LOCATION | VENUE (optional, defaults to TEXT)",
   "replyToMessageId": "message-uuid (optional)",
   "mediaIds": ["media-uuid-1", "media-uuid-2"],
   "envelopes": [
@@ -493,6 +494,7 @@ POST /messages
   "senderUserId": "sender-user-uuid",
   "senderDeviceId": "sender-device-uuid",
   "threadSequence": 1,
+  "contentType": "TEXT",
   "replyToMessageId": null,
   "createdAt": "2026-05-16T10:00:00.000Z",
   "media": [
@@ -536,6 +538,7 @@ POST /messages
 - Envelopes for unrelated devices are rejected
 - Retrying with same idempotency key returns original message
 - Server assigns `threadSequence` for ordering
+- `contentType` is opaque to the server — it tags the message for local rendering hints (e.g. notification previews, thread list previews). The actual content (lat/lng, title, address) lives inside the encrypted `ciphertext` envelope as a client-defined plaintext JSON payload. Accepted values: `TEXT` (default), `LOCATION`, `VENUE`.
 - `mediaIds` is optional (max 10 attachments per message, default `MEDIA_MAX_ATTACHMENTS_PER_MESSAGE=10`)
 - Each `mediaId` must be owned by the sender, in `COMPLETE` status, and not yet bound to a message
 
@@ -623,6 +626,7 @@ POST /messages/forward
 - Each target is processed independently — partial failure is possible
 - Cannot forward a deleted (tombstoned) message
 - Forwarded messages are marked with `forwarded: true`
+- The `contentType` of the source message (e.g. `LOCATION`, `VENUE`) is preserved on each forwarded message — recipients see the same content type tag as the original sender
 - Media attachments are cloned server-side; recipients download via the normal `GET /messages/media/:mediaId/download-url` flow
 - Per-target idempotency keys are derived internally (`{key}:0`, `{key}:1`, etc.)
 
@@ -636,7 +640,7 @@ POST /messages/forward
 
 ## Media Attachments
 
-The media flow has 3 steps per attachment: `init` → upload to R2 → `complete`. Attachments are bound to a message at `POST /messages` time (or `POST /groups/:id/envelopes`).
+The media flow has 3 steps per attachment: `init` → upload to R2 → `complete`. Attachments are bound to a message at `POST /messages` time (or `POST /groups/:id/envelopes`). Both endpoints also accept an optional `contentType` field (`TEXT` default, `LOCATION`, `VENUE`) which is stored on the `Message` row and preserved on forwarding — the actual content (e.g. coordinates, venue name) lives inside the encrypted `ciphertext` envelope and is opaque to the server.
 
 ### Init Media Upload
 

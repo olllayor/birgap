@@ -3,12 +3,14 @@ import {
   ArrayMaxSize,
   IsArray,
   IsDefined,
+  IsEnum,
   IsOptional,
   IsString,
   IsUUID,
   MaxLength,
   MinLength,
 } from 'class-validator';
+import { MessageContentType } from '../../messages/enums/content-type.enum';
 
 export class SendGroupMessageDto {
   @ApiProperty()
@@ -20,6 +22,15 @@ export class SendGroupMessageDto {
   @MinLength(8)
   @MaxLength(128)
   idempotencyKey!: string;
+
+  @ApiProperty({
+    required: false,
+    enum: MessageContentType,
+    description: 'Content type of the message. Defaults to TEXT.',
+  })
+  @IsOptional()
+  @IsEnum(MessageContentType)
+  contentType?: MessageContentType;
 
   @ApiProperty({ required: false, description: 'ID of the message being replied to (must be in the same group).' })
   @IsOptional()

@@ -50,6 +50,7 @@ enum MediaType {
 }
 
 type Message {
+  contentType: MessageContentType!
   createdAt: DateTime!
   deletedAt: DateTime
   editedAt: DateTime
@@ -63,6 +64,15 @@ type Message {
   senderUserId: ID!
   threadId: ID
   threadSequence: Int!
+}
+
+enum MessageContentType {
+  """Location message"""
+  LOCATION
+  """Text message"""
+  TEXT
+  """Venue message"""
+  VENUE
 }
 
 type MessageMedia {

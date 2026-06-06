@@ -175,6 +175,7 @@ export class GroupsService {
           senderDeviceId: dto.senderDeviceId,
           idempotencyKey: dto.idempotencyKey,
           threadSequence: nextSequence,
+          contentType: dto.contentType ?? 'TEXT',
           replyToMessageId,
         },
       });
@@ -197,6 +198,7 @@ export class GroupsService {
       ciphertext: dto.ciphertext,
       threadSequence: result.threadSequence,
       replyToMessageId: result.replyToMessageId,
+      contentType: dto.contentType ?? 'TEXT',
       createdAt: result.createdAt.toISOString(),
       mediaIds: dto.mediaIds ?? [],
     });

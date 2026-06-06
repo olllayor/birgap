@@ -1,5 +1,6 @@
 import { Field, ID, Int, ObjectType } from '@nestjs/graphql';
 import { MessageMediaType } from './message-media.model';
+import { MessageContentType } from '../enums/content-type.enum';
 
 @ObjectType('Message')
 export class MessageType {
@@ -20,6 +21,9 @@ export class MessageType {
 
   @Field(() => Int)
   threadSequence!: number;
+
+  @Field(() => MessageContentType)
+  contentType!: MessageContentType;
 
   @Field(() => ID, { nullable: true })
   replyToMessageId!: string | null;

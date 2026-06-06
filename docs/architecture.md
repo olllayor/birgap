@@ -50,6 +50,7 @@ BirGap is a backend relay for an end-to-end encrypted (E2EE) 1:1 messenger. The 
 4. **Sequence Ordering**: Server-assigned monotonic sequence numbers per thread
 5. **Multi-Device Sync**: Up to 3 active devices per user with sender-sync envelopes
 6. **Signal Protocol Compatible**: Prekey management follows Signal Protocol patterns
+7. **Opaque Content Types**: Messages carry a `contentType` tag (`TEXT` / `LOCATION` / `VENUE`) for client-side rendering hints (notification previews, thread list previews). The tag is the only non-encrypted field on the message — actual content lives inside the ciphertext envelope and is invisible to the server.
 
 ## Module Architecture
 

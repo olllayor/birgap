@@ -5,6 +5,7 @@ import {
   ArrayMinSize,
   IsArray,
   IsDefined,
+  IsEnum,
   IsOptional,
   IsString,
   IsUUID,
@@ -12,6 +13,7 @@ import {
   MinLength,
   ValidateNested,
 } from 'class-validator';
+import { MessageContentType } from '../enums/content-type.enum';
 
 export class MessageEnvelopeDto {
   @ApiProperty()
@@ -37,6 +39,15 @@ export class SendMessageDto {
   @MinLength(8)
   @MaxLength(128)
   idempotencyKey!: string;
+
+  @ApiProperty({
+    required: false,
+    enum: MessageContentType,
+    description: 'Content type of the message. Defaults to TEXT.',
+  })
+  @IsOptional()
+  @IsEnum(MessageContentType)
+  contentType?: MessageContentType;
 
   @ApiProperty({ required: false, description: 'ID of the message being replied to (must be in the same thread).' })
   @IsOptional()

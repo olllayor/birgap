@@ -314,6 +314,7 @@ Protected endpoint.
   "senderDeviceId": "sender-device-uuid",
   "recipientUserId": "recipient-user-uuid",
   "idempotencyKey": "client-generated-unique-key",
+  "contentType": "TEXT | LOCATION | VENUE (optional, defaults to TEXT)",
   "replyToMessageId": "message-uuid (optional)",
   "mediaIds": ["media-uuid-1", "media-uuid-2"],
   "envelopes": [
@@ -339,6 +340,7 @@ Rules:
 - The request must include envelopes for every active recipient device.
 - Envelopes may also include the sender’s other active devices for sender-sync.
 - Envelopes for unrelated devices are rejected.
+- `contentType` is optional (defaults to `TEXT`) and tags the message for local rendering hints. The actual content for `LOCATION` / `VENUE` messages (coordinates, accuracy, venue name, address, place id) lives inside the encrypted `ciphertext` envelope as a client-defined plaintext JSON payload — the server never inspects it. The tag is also returned in the response and on subsequent reads.
 - `mediaIds` is optional. Max attachments per message is `MEDIA_MAX_ATTACHMENTS_PER_MESSAGE` (default 10). Each `mediaId` must have been created by the current user via `POST /messages/media/init`, must be in `COMPLETE` status, and must not yet be bound to a message.
 
 Response:
@@ -350,6 +352,7 @@ Response:
   "senderUserId": "sender-user-uuid",
   "senderDeviceId": "sender-device-uuid",
   "threadSequence": 1,
+  "contentType": "TEXT",
   "replyToMessageId": null,
   "createdAt": "2026-05-10T12:00:00.000Z",
   "media": [

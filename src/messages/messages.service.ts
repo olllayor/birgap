@@ -134,6 +134,7 @@ export class MessagesService {
             senderDeviceId: dto.senderDeviceId,
             idempotencyKey: dto.idempotencyKey,
             threadSequence: sequencedThread.latestSequence,
+            contentType: dto.contentType ?? 'TEXT',
             replyToMessageId,
             envelopes: {
               create: dto.envelopes.map((envelope) => {
@@ -201,6 +202,7 @@ export class MessagesService {
     await this.assertActiveDevice(userId, dto.senderDeviceId);
 
     const sourceMessage = await this.assertMessageAccess(userId, dto.sourceMessageId);
+    const sourceContentType = sourceMessage.contentType;
 
     if (sourceMessage.deletedAt) {
       throw new ForbiddenException('Cannot forward a deleted message');
@@ -232,6 +234,7 @@ export class MessagesService {
             perTargetKey,
             target,
             sourceMedia,
+            sourceContentType,
           );
           results.push({ targetType: 'direct', targetId: target.recipientUserId!, success: true, messageId });
         } else {
@@ -242,6 +245,7 @@ export class MessagesService {
             perTargetKey,
             target,
             sourceMedia,
+            sourceContentType,
           );
           results.push({ targetType: 'group', targetId: target.groupId!, success: true, messageId });
         }
@@ -283,6 +287,7 @@ export class MessagesService {
     idempotencyKey: string,
     target: ForwardTargetDto,
     sourceMedia: import('@prisma/client').MessageMedia[],
+    contentType: import('@prisma/client').MessageContentType,
   ): Promise<string> {
     const existing = await this.prisma.message.findUnique({
       where: {
@@ -361,6 +366,7 @@ export class MessagesService {
             idempotencyKey,
             threadSequence: sequencedThread.latestSequence,
             forwarded: true,
+            contentType,
             envelopes: {
               create: target.envelopes!.map((envelope) => {
                 const isRecipientDevice = recipientDeviceIds.has(envelope.recipientDeviceId);
@@ -425,6 +431,7 @@ export class MessagesService {
     idempotencyKey: string,
     target: ForwardTargetDto,
     sourceMedia: import('@prisma/client').MessageMedia[],
+    contentType: import('@prisma/client').MessageContentType,
   ): Promise<string> {
     const member = await this.prisma.groupMember.findUnique({
       where: { groupId_userId: { groupId: target.groupId!, userId: senderUserId } },
@@ -473,6 +480,7 @@ export class MessagesService {
           idempotencyKey,
           threadSequence: nextSequence,
           forwarded: true,
+          contentType,
         },
       });
 
@@ -491,6 +499,7 @@ export class MessagesService {
       ciphertext: target.ciphertext,
       threadSequence: message.threadSequence,
       replyToMessageId: null,
+      contentType,
       createdAt: message.createdAt.toISOString(),
       mediaIds: sourceMedia.map((m) => m.id),
       forwarded: true,
@@ -519,6 +528,7 @@ export class MessagesService {
             senderUserId: true,
             senderDeviceId: true,
             threadSequence: true,
+            contentType: true,
             replyToMessageId: true,
             forwarded: true,
             createdAt: true,
@@ -662,6 +672,7 @@ export class MessagesService {
             senderUserId: true,
             senderDeviceId: true,
             threadSequence: true,
+            contentType: true,
             replyToMessageId: true,
             forwarded: true,
             createdAt: true,
@@ -955,6 +966,7 @@ export class MessagesService {
         threadId: true,
         groupId: true,
         senderUserId: true,
+        contentType: true,
         createdAt: true,
         deletedAt: true,
         thread: { select: { userAId: true, userBId: true } },
@@ -990,6 +1002,7 @@ export class MessagesService {
     senderUserId: string;
     senderDeviceId: string;
     threadSequence: number;
+    contentType?: string;
     replyToMessageId?: string | null;
     forwarded?: boolean;
     createdAt: Date;
@@ -1003,6 +1016,7 @@ export class MessagesService {
       senderUserId: message.senderUserId,
       senderDeviceId: message.senderDeviceId,
       threadSequence: message.threadSequence,
+      contentType: message.contentType ?? 'TEXT',
       replyToMessageId: message.replyToMessageId ?? null,
       forwarded: message.forwarded ?? false,
       createdAt: message.createdAt,

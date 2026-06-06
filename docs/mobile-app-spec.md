@@ -69,6 +69,10 @@ birgap_app/
 │   │   ├── push/
 │   │   │   └── push_service.dart             # FCM init, token registration, background handler
 │   │   │
+│   │   ├── location/
+│   │   │   ├── map_tile_service.dart          # OSM tile URL builder for flutter_map
+│   │   │   └── poi_search_service.dart        # Nominatim (OpenStreetMap) POI search client
+│   │   │
 │   │   └── config/
 │   │       └── app_config.dart               # Base URL, timeouts, constants
 │   │
@@ -110,6 +114,14 @@ birgap_app/
 │   │   │   └── screens/
 │   │   │       └── device_settings_screen.dart
 │   │   │
+│   │   ├── location/
+│   │   │   ├── models/
+│   │   │   │   └── location_data.dart          # freezed: LocationData, VenueData
+│   │   │   ├── providers/
+│   │   │   │   └── location_provider.dart      # GPS position + POI search
+│   │   │   └── screens/
+│   │   │       └── location_picker_screen.dart  # full-screen map + search + send
+│   │   │
 │   │   └── settings/
 │   │       ├── providers/
 │   │       │   └── backup_provider.dart
@@ -125,7 +137,8 @@ birgap_app/
 │       │   ├── user_avatar.dart
 │       │   ├── loading_indicator.dart
 │       │   ├── error_banner.dart
-│       │   └── message_bubble.dart
+│       │   ├── message_bubble.dart
+│       │   └── location_bubble.dart            # map thumbnail for location/venue messages
 │       └── extensions/
 │           ├── date_extensions.dart
 │           └── string_extensions.dart
@@ -197,7 +210,15 @@ class Message with _$Message {
     required String senderUserId,
     required String senderDeviceId,
     required int threadSequence,
+    @Default(MessageContentType.text) MessageContentType contentType,
     required String? text,
+    double? latitude,
+    double? longitude,
+    double? horizontalAccuracy,
+    String? venueTitle,
+    String? venueAddress,
+    String? googlePlaceId,
+    String? googlePlaceType,
     required MessageStatus status,
     @Default(false) bool forwarded,
     required DateTime createdAt,
@@ -207,6 +228,8 @@ class Message with _$Message {
 
   factory Message.fromJson(Map<String, dynamic> json) => _$MessageFromJson(json);
 }
+
+enum MessageContentType { text, location, venue }
 
 enum MessageStatus { sending, pending, delivered, read, failed }
 ```
@@ -239,6 +262,7 @@ class PendingEnvelopeMessage with _$PendingEnvelopeMessage {
     required String senderUserId,
     required String senderDeviceId,
     required int threadSequence,
+    @Default('TEXT') String contentType,
     required DateTime createdAt,
   }) = _PendingEnvelopeMessage;
 
@@ -972,7 +996,15 @@ Drift schema:
 //   senderUserId TEXT NOT NULL
 //   senderDeviceId TEXT NOT NULL
 //   threadSequence INTEGER NOT NULL
+//   contentType TEXT NOT NULL DEFAULT 'TEXT' (TEXT | LOCATION | VENUE)
 //   text TEXT
+//   latitude REAL              (nullable, set for LOCATION and VENUE)
+//   longitude REAL             (nullable, set for LOCATION and VENUE)
+//   horizontalAccuracy REAL    (nullable, meters 0-1500, LOCATION only)
+//   venueTitle TEXT            (nullable, VENUE only)
+//   venueAddress TEXT          (nullable, VENUE only)
+//   googlePlaceId TEXT         (nullable, VENUE only)
+//   googlePlaceType TEXT       (nullable, VENUE only)
 //   status TEXT NOT NULL (sending/pending/delivered/read/failed)
 //   forwarded INTEGER NOT NULL DEFAULT 0 (boolean: 1 = forwarded message)
 //   createdAt INTEGER NOT NULL (ms epoch)
@@ -1157,21 +1189,26 @@ class PushService {
 ### Send Message Flow
 
 ```
-1. User types message, taps send
+1. User types message, taps send (or sends location/venue)
 2. Generate idempotencyKey: UUID v4 (8+ chars)
-3. Fetch bundles: GET /users/:recipientUserId/devices/key-bundles
-4. GET /devices → get own other devices (for sender-sync)
-5. For each recipient device + own other devices:
+3. Determine contentType: "TEXT" (default), "LOCATION", or "VENUE"
+4. Build plaintext JSON:
+   - TEXT:     { "type": "text", "text": "Hello" }
+   - LOCATION: { "type": "location", "latitude": 41.2995, "longitude": 69.2401, "horizontalAccuracy": 15.5 }
+   - VENUE:    { "type": "venue", "latitude": 41.2995, "longitude": 69.2401, "title": "Broadway", "address": "Sayilgoh St", "googlePlaceId": "ChIJ...", "googlePlaceType": "restaurant" }
+5. Fetch bundles: GET /users/:recipientUserId/devices/key-bundles
+6. GET /devices → get own other devices (for sender-sync)
+7. For each recipient device + own other devices:
    a. encryptor.encryptForDevice(plaintext, theirKeyBundle)
    b. Build envelope { recipientDeviceId, ciphertext }
-6. POST /messages: { senderDeviceId, recipientUserId, idempotencyKey, envelopes }
-7. On success:
-   a. Save message to local DB with { id, threadId, threadSequence, status: pending }
+8. POST /messages: { senderDeviceId, recipientUserId, idempotencyKey, contentType, envelopes }
+9. On success:
+   a. Save message to local DB with { id, threadId, threadSequence, contentType, status: pending }
    b. Reconcile: mark local "sending" placeholder as confirmed
-   c. Show in chat UI
-8. On failure:
-   a. If 401: refresh token, retry (idempotencyKey prevents duplicates)
-   b. If 400/404: show error, mark message as "failed"
+   c. Show in chat UI (render based on contentType)
+10. On failure:
+    a. If 401: refresh token, retry (idempotencyKey prevents duplicates)
+    b. If 400/404: show error, mark message as "failed"
 ```
 
 ### Forward Message Flow
@@ -1393,6 +1430,10 @@ dependencies:
   permission_handler: ^11.3.1
   intl: ^0.19.0
   workmanager: ^0.5.2
+  flutter_map: ^7.0.2
+  latlong2: ^0.9.1
+  geolocator: ^13.0.2
+  map_launcher: ^3.5.0
 
 dev_dependencies:
   flutter_test:
@@ -1410,6 +1451,7 @@ dev_dependencies:
 ## 14. iOS Specifics
 
 - `ios/Runner/Info.plist`: Add `UIBackgroundModes` with `remote-notification` for silent push
+- `ios/Runner/Info.plist`: Add `NSLocationWhenInUseUsageDescription` for location sharing
 - `ios/Podfile`: `platform :ios, '13.0'` minimum
 - Firebase: Download `GoogleService-Info.plist`, add to Runner target
 - Keychain access group for `flutter_secure_storage`
@@ -1434,9 +1476,10 @@ dev_dependencies:
 5. **Phase 5 — Device Registration**: device_api, registration flow after auth
 6. **Phase 6 — Local DB**: drift schema, helpers
 7. **Phase 7 — Chat**: chat_list_screen, chat_screen, send/receive message providers
-8. **Phase 8 — WebSocket**: socket_manager, pending_poller, typing indicators
-9. **Phase 9 — Push**: FCM init, token management, background handler
-10. **Phase 10 — Polish**: backups, device management, error handling, offline queue
+8. **Phase 7b — Location**: location_picker_screen, location_bubble, POI search, GPS integration
+9. **Phase 8 — WebSocket**: socket_manager, pending_poller, typing indicators
+10. **Phase 9 — Push**: FCM init, token management, background handler
+11. **Phase 10 — Polish**: backups, device management, error handling, offline queue
 
 ---
 

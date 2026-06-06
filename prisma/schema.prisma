@@ -58,6 +58,12 @@ enum UploadStatus {
   FAILED
 }
 
+enum MessageContentType {
+  TEXT
+  LOCATION
+  VENUE
+}
+
 model User {
   id          String     @id @default(uuid()) @db.Uuid
   phoneHash   String     @unique
@@ -151,16 +157,17 @@ model DirectThread {
 }
 
 model Message {
-  id                   String    @id @default(uuid()) @db.Uuid
-  threadId             String?   @db.Uuid
-  groupId              String?   @db.Uuid
-  senderUserId         String    @db.Uuid
-  senderDeviceId       String    @db.Uuid
+  id                   String             @id @default(uuid()) @db.Uuid
+  threadId             String?            @db.Uuid
+  groupId              String?            @db.Uuid
+  senderUserId         String             @db.Uuid
+  senderDeviceId       String             @db.Uuid
   idempotencyKey       String
   threadSequence       Int
-  replyToMessageId     String?   @db.Uuid
-  forwarded            Boolean   @default(false)
-  createdAt            DateTime  @default(now())
+  contentType          MessageContentType @default(TEXT)
+  replyToMessageId     String?            @db.Uuid
+  forwarded            Boolean            @default(false)
+  createdAt            DateTime           @default(now())
   deletedAt            DateTime?
   editedAt             DateTime?
   lastEditIdempotencyKey String?

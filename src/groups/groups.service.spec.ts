@@ -288,6 +288,7 @@ describe('GroupsService', () => {
           senderDeviceId: 'dev-1',
           idempotencyKey: 'key-12345678',
           threadSequence: 6,
+          contentType: 'TEXT',
           replyToMessageId: null,
         },
       });
@@ -300,6 +301,7 @@ describe('GroupsService', () => {
         ciphertext: 'cipher',
         threadSequence: 6,
         replyToMessageId: null,
+        contentType: 'TEXT',
         createdAt: new Date('2026-01-01T00:00:00Z').toISOString(),
         mediaIds: [],
       });
