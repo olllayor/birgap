@@ -23,7 +23,7 @@
     "admin:backfill-audit": "tsx prisma/scripts/backfill-admin-audit-log.ts"
   },
   "dependencies": {
-    "@apollo/server": "^4.13.0",
+    "@apollo/server": "^5.5.0",
     "@apollo/server-plugin-landing-page-graphql-playground": "^4.0.1",
     "@aws-sdk/client-s3": "^3.1048.0",
     "@aws-sdk/s3-request-presigner": "^3.1048.0",
