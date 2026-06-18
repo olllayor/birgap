@@ -1,7 +1,7 @@
 import { Inject, Logger } from '@nestjs/common';
 import { Processor, WorkerHost, OnWorkerEvent } from '@nestjs/bullmq';
 import { Job } from 'bullmq';
-import { SmsService, SMS_SERVICE_TOKEN } from '../sms.module';
+import { SmsService, SMS_SERVICE_TOKEN } from '../sms.tokens';
 import { SmsOtpJobData } from './sms-otp-job.interface';
 import { QueueMetrics } from '../../metrics/queue.metrics';
 

@@ -6,10 +6,9 @@ import { MetricsModule } from '../metrics/metrics.module';
 import { SayqalSmsService } from './sayqal-sms.service';
 import { MockSmsService } from './mock-sms.service';
 import { SmsOtpProcessor } from './queue/sms-otp.processor';
+import { SMS_SERVICE_TOKEN } from './sms.tokens';
 
-export type SmsService = SayqalSmsService | MockSmsService;
-
-export const SMS_SERVICE_TOKEN = 'SMS_SERVICE';
+export { SmsService, SMS_SERVICE_TOKEN } from './sms.tokens';
 
 @Module({
   imports: [

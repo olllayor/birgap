@@ -11,7 +11,7 @@ type DirectThread {
   createdAt: DateTime!
   id: ID!
   latestSequence: Int!
-  messages: [Message!]!
+  messages(afterSequence: Int, beforeSequence: Int, limit: Int): [Message!]!
   updatedAt: DateTime!
   userA: User
   userAId: ID!
@@ -23,7 +23,7 @@ type Group {
   createdAt: DateTime!
   id: ID!
   members: [GroupMember!]!
-  messages: [Message!]!
+  messages(afterSequence: Int, beforeSequence: Int, limit: Int): [Message!]!
   updatedAt: DateTime!
 }
 
@@ -38,14 +38,11 @@ type GroupMember {
 """Arbitrary JSON value"""
 scalar JSON
 
+"""Type of media attached to a message"""
 enum MediaType {
-  """Audio media attachment"""
   AUDIO
-  """Document media attachment"""
   DOCUMENT
-  """Image media attachment"""
   IMAGE
-  """Video media attachment"""
   VIDEO
 }
 
@@ -66,18 +63,16 @@ type Message {
   threadSequence: Int!
 }
 
+"""Type of content in a message"""
 enum MessageContentType {
-  """Location message"""
   LOCATION
-  """Text message"""
   TEXT
-  """Venue message"""
   VENUE
 }
 
 type MessageMedia {
-  bucketKey: String!
   createdAt: DateTime!
+  duration: Int
   filename: String!
   height: Int
   id: ID!
@@ -88,7 +83,7 @@ type MessageMedia {
   sizeBytes: Int!
   thumbnailBucketKey: String
   thumbnailCiphertextHash: String
-  uploadSessionId: ID
+  uploadSessionId: String
   uploadStatus: UploadStatus!
   uploadedAt: DateTime
   width: Int
@@ -101,12 +96,10 @@ type Query {
   groups(userId: ID!): [Group!]!
 }
 
+"""Upload status of a media attachment"""
 enum UploadStatus {
-  """Upload completed successfully"""
   COMPLETE
-  """Upload failed"""
   FAILED
-  """Upload pending"""
   PENDING
 }
 

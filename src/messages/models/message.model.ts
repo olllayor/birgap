@@ -40,9 +40,9 @@ export class MessageType {
   @Field()
   createdAt!: Date;
 
-  @Field({ nullable: true })
+  @Field(() => Date, { nullable: true })
   deletedAt?: Date | null;
 
-  @Field({ nullable: true })
+  @Field(() => Date, { nullable: true })
   editedAt?: Date | null;
 }
