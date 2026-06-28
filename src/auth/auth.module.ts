@@ -1,6 +1,7 @@
 import { Global, Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { JwtModule } from '@nestjs/jwt';
+import { BullModule } from '@nestjs/bullmq';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { OtpService } from './otp.service';
@@ -19,6 +20,9 @@ import { SmsModule } from '../sms/sms.module';
       }),
     }),
     SmsModule,
+    BullModule.registerQueue({
+      name: 'sms-otp',
+    }),
   ],
   controllers: [AuthController],
   providers: [AuthService, OtpService],

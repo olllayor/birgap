@@ -22,7 +22,7 @@ export class MessageMediaType {
   @Field()
   filename!: string;
 
-  @Field({ nullable: true })
+  @Field(() => String, { nullable: true })
   thumbnailBucketKey?: string | null;
 
   @Field(() => Int, { nullable: true })
@@ -37,16 +37,16 @@ export class MessageMediaType {
   @Field()
   mediaCiphertextHash!: string;
 
-  @Field({ nullable: true })
+  @Field(() => String, { nullable: true })
   thumbnailCiphertextHash?: string | null;
 
   @Field(() => UploadStatus)
   uploadStatus!: UploadStatus;
 
-  @Field({ nullable: true })
+  @Field(() => Date, { nullable: true })
   uploadedAt?: Date | null;
 
-  @Field({ nullable: true })
+  @Field(() => String, { nullable: true })
   uploadSessionId?: string | null;
 
   @Field()
