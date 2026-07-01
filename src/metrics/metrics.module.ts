@@ -28,6 +28,11 @@ import { QueueMetrics } from './queue.metrics';
       help: 'Total number of failed queue jobs',
       labelNames: ['queue'],
     }),
+    makeCounterProvider({
+      name: 'redis_cache_operations_total',
+      help: 'Total number of Redis cache operations',
+      labelNames: ['operation', 'result'],
+    }),
   ],
   exports: [RedisMetrics, QueueMetrics],
 })
