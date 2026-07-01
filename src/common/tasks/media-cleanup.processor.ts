@@ -23,7 +23,7 @@ export class MediaCleanupProcessor extends WorkerHost {
     this.pendingTimeoutMs = hours * 60 * 60 * 1000;
   }
 
-  async process(job: Job<MediaCleanupJobData>): Promise<void> {
+  async process(_job: Job<MediaCleanupJobData>): Promise<void> {
     this.logger.log('Starting media orphan cleanup...');
     const cutoff = new Date(Date.now() - this.pendingTimeoutMs);
 

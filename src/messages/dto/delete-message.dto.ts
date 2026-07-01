@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsEnum, IsOptional, IsUUID } from 'class-validator';
+import { IsEnum, IsUUID } from 'class-validator';
 
 export enum DeleteMessageScope {
   FOR_ME = 'FOR_ME',

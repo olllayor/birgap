@@ -1,5 +1,4 @@
 import { PrismaService } from '../../prisma/prisma.service';
-import { AuditLogService } from './audit-log.service';
 import { DailyMetricsRollupService } from './daily-metrics-rollup.service';
 
 function makePrismaStub() {

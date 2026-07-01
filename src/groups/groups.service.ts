@@ -296,6 +296,118 @@ export class GroupsService {
     return group;
   }
 
+  async findByIdWithMembers(id: string, userId: string) {
+    const group = await this.prisma.group.findUnique({
+      where: { id },
+      include: {
+        members: {
+          include: {
+            user: {
+              select: {
+                id: true,
+                username: true,
+                profileAvatarUrl: true,
+                encryptedProfile: true,
+                profileKeyHash: true,
+                createdAt: true,
+              },
+            },
+          },
+        },
+      },
+    });
+    if (!group) {
+      throw new NotFoundException('Group not found');
+    }
+    const isMember = group.members.some((m) => m.userId === userId);
+    if (!isMember) {
+      throw new ForbiddenException('Not a member of this group');
+    }
+    return group;
+  }
+
+  async getMessages(
+    groupId: string,
+    userId: string,
+    opts: { limit?: number; beforeSequence?: number; afterSequence?: number },
+  ) {
+    const member = await this.prisma.groupMember.findUnique({
+      where: { groupId_userId: { groupId, userId } },
+    });
+    if (!member) {
+      throw new ForbiddenException('Not a member of this group');
+    }
+
+    const take = Math.min(opts.limit ?? 50, 100);
+    const messages = await this.prisma.message.findMany({
+      where: {
+        groupId,
+        ...(opts.beforeSequence !== undefined && { threadSequence: { lt: opts.beforeSequence } }),
+        ...(opts.afterSequence !== undefined && { threadSequence: { gt: opts.afterSequence } }),
+      },
+      orderBy: { threadSequence: 'desc' },
+      take,
+      select: {
+        id: true,
+        threadId: true,
+        groupId: true,
+        senderUserId: true,
+        senderDeviceId: true,
+        threadSequence: true,
+        contentType: true,
+        replyToMessageId: true,
+        forwarded: true,
+        createdAt: true,
+        deletedAt: true,
+        editedAt: true,
+      },
+    });
+
+    const reversed = messages.reverse();
+
+    const mediaRecords = await this.prisma.messageMedia.findMany({
+      where: { messageId: { in: reversed.map((m) => m.id) } },
+      orderBy: { createdAt: 'asc' },
+    });
+    const mediaByMessage = new Map<string, typeof mediaRecords>();
+    for (const m of mediaRecords) {
+      if (!m.messageId) continue;
+      const list = mediaByMessage.get(m.messageId) ?? [];
+      list.push(m);
+      mediaByMessage.set(m.messageId, list);
+    }
+
+    const replyIds = reversed
+      .map((m) => m.replyToMessageId)
+      .filter((id): id is string => id !== null);
+    const replyMessages = replyIds.length
+      ? await this.prisma.message.findMany({
+          where: { id: { in: replyIds } },
+          select: {
+            id: true,
+            threadId: true,
+            groupId: true,
+            senderUserId: true,
+            senderDeviceId: true,
+            threadSequence: true,
+            contentType: true,
+            replyToMessageId: true,
+            forwarded: true,
+            createdAt: true,
+            deletedAt: true,
+            editedAt: true,
+          },
+        })
+      : [];
+    const replyMap = new Map(replyMessages.map((r) => [r.id, r]));
+
+    return reversed.map((msg) => ({
+      ...msg,
+      media: mediaByMessage.get(msg.id) ?? [],
+      replyTo: msg.replyToMessageId ? replyMap.get(msg.replyToMessageId) ?? null : null,
+    }));
+  }
+
   async findByUser(userId: string) {
     return this.prisma.group.findMany({
       where: { members: { some: { userId } } },

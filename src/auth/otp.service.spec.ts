@@ -1,6 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
-import { ForbiddenException, NotFoundException } from '@nestjs/common';
+import { BadRequestException } from '@nestjs/common';
 import { OtpService } from './otp.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { OtpStatus } from '@prisma/client';
@@ -40,7 +40,7 @@ describe('OtpService', () => {
             smsReport: { create: jest.fn() },
           },
         },
-        { provide: ConfigService, useValue: { get: jest.fn((key: string) => undefined) } },
+        { provide: ConfigService, useValue: { get: jest.fn((key: string) => key === 'PHONE_HASH_PEPPER' ? 'test-pepper' : undefined), getOrThrow: jest.fn((key: string) => { if (key === 'PHONE_HASH_PEPPER') return 'test-pepper'; throw new Error(`Missing config: ${key}`); }) } },
         { provide: 'BullQueue_sms-otp', useValue: mockSmsQueue },
       ],
     }).compile();
@@ -133,7 +133,7 @@ describe('OtpService', () => {
       mockOtpModel.update.mockResolvedValue({});
 
       await expect(service.verifyOtp('+998901234567', '000000')).rejects.toThrow(
-        ForbiddenException,
+        BadRequestException,
       );
     });
 
@@ -141,7 +141,7 @@ describe('OtpService', () => {
       mockActiveOtp = null;
 
       await expect(service.verifyOtp('+998901234567', '123456')).rejects.toThrow(
-        NotFoundException,
+        BadRequestException,
       );
     });
 
@@ -160,11 +160,11 @@ describe('OtpService', () => {
       mockOtpModel.update.mockResolvedValue({});
 
       await expect(service.verifyOtp('+998901234567', '000000')).rejects.toThrow(
-        ForbiddenException,
+        BadRequestException,
       );
     });
 
-    it('should persist the 5th failed attempt before throwing lockout ForbiddenException', async () => {
+    it('should persist the 5th failed attempt before throwing lockout BadRequestException', async () => {
       const otpWithAttempts = {
         id: '1',
         phoneHash: 'hash',
@@ -179,7 +179,7 @@ describe('OtpService', () => {
       mockOtpModel.update.mockResolvedValue({});
 
       await expect(service.verifyOtp('+998901234567', '000000')).rejects.toThrow(
-        ForbiddenException,
+        BadRequestException,
       );
 
       // Verify attempts is updated in DB before throwing
@@ -203,7 +203,7 @@ describe('OtpService', () => {
       mockAttemptsSum = 5;
 
       await expect(service.verifyOtp('+998901234567', '123456')).rejects.toThrow(
-        ForbiddenException,
+        BadRequestException,
       );
       expect(mockOtpModel.update).not.toHaveBeenCalled();
     });
@@ -222,7 +222,7 @@ describe('OtpService', () => {
       mockAttemptsSum = 5;
 
       await expect(service.verifyOtp('+998901234567', '123456')).rejects.toThrow(
-        ForbiddenException,
+        BadRequestException,
       );
     });
 
@@ -240,7 +240,7 @@ describe('OtpService', () => {
       mockAttemptsSum = 5; // exhausted on a previous OTP
 
       await expect(service.verifyOtp('+998901234567', '123456')).rejects.toThrow(
-        ForbiddenException,
+        BadRequestException,
       );
       expect(mockOtpModel.update).not.toHaveBeenCalled();
     });

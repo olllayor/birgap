@@ -48,8 +48,8 @@ brew services start postgresql
 # Start Redis with Docker
 docker compose up -d redis
 
-# Or check if Redis is running
-redis-cli ping
+# Or check if Redis is running (with password)
+redis-cli -a birgap-dev ping
 # Should return: PONG
 
 # Start Redis service (macOS with Homebrew)
@@ -58,6 +58,9 @@ brew services start redis
 
 **Redis Connection Resilience**:
 The Redis client uses exponential backoff for reconnection (max 2s delay). Transient network errors (`ECONNREFUSED`, `ETIMEDOUT`, `ECONNRESET`, `EPIPE`) trigger automatic reconnection. Check server logs if Redis remains unreachable after recovery.
+
+**Redis Password**:
+The local Docker setup uses password `birgap-dev` (configured in `docker-compose.yml`). Ensure `REDIS_URL` in your `.env` includes the password: `redis://:birgap-dev@localhost:6379`.
 
 ---
 

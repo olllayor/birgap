@@ -1,4 +1,5 @@
 import { Body, Controller, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
@@ -29,9 +30,18 @@ export class UsersController {
     return this.usersService.updateProfile(user.userId, dto);
   }
 
+  @Get('me')
+  getMe(@CurrentUser() user: AuthenticatedUser) {
+    return this.usersService.getMe(user.userId);
+  }
+
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
   @Get('search')
-  searchByUsername(@Query('username') username: string) {
-    return this.usersService.searchByUsername(username);
+  searchByUsername(
+    @Query('username') username: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.usersService.searchByUsername(username, user.userId);
   }
 }
 

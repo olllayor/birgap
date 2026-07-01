@@ -88,6 +88,9 @@ enum DevicePlatform {
   ANDROID
   IOS
   WEB
+  MACOS
+  WINDOWS
+  LINUX
 }
 
 enum PushPlatform {
@@ -152,6 +155,7 @@ model User {
   suspensionsAsRevoker UserSuspension[] @relation("SuspensionRevoker")
 
   @@index([role])
+  @@index([username])
 }
 
 model Device {
@@ -311,13 +315,17 @@ model RefreshToken {
   id        String    @id @default(uuid()) @db.Uuid
   userId    String    @db.Uuid
   tokenHash String    @unique
+  familyId  String
   expiresAt DateTime
   revokedAt DateTime?
+  userAgent String?
+  ipAddress String?
   createdAt DateTime  @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, revokedAt])
+  @@index([familyId])
 }
 
 model SocketTicket {

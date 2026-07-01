@@ -1,5 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { CanActivate, ExecutionContext, ValidationPipe } from '@nestjs/common';
+import { CanActivate, ExecutionContext } from '@nestjs/common';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { AdminRoleGuard } from '../guards/admin-role.guard';
 import { AuthenticatedUser } from '../../common/types/authenticated-user';
