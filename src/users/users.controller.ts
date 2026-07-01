@@ -35,7 +35,7 @@ export class UsersController {
     return this.usersService.getMe(user.userId);
   }
 
-  @Throttle({ default: { limit: 30, ttl: 60_000 } })
+  @Throttle({ default: { limit: 60, ttl: 60_000 } })
   @Get('search')
   searchByUsername(
     @Query('username') username: string,
