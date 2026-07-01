@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { Prisma, DailyMetricKind } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AnalyticsQueryDto } from '../dto/analytics-query.dto';
 

@@ -158,7 +158,7 @@ describe('ReportsService.create', () => {
     });
 
     const redis = buildRedis();
-    (redis.client.incr as jest.Mock).mockResolvedValue(51);
+    (redis.client.incr as jest.Mock).mockResolvedValue(201);
 
     const service = new ReportsService(
       prisma as unknown as PrismaService,
@@ -225,11 +225,11 @@ describe('ReportsService.create', () => {
     );
   });
 
-  it('rejects USER at the IP rate limit (10/min by default) but exempts MODERATOR', async () => {
+  it('rejects USER at the IP rate limit (50/min by default) but exempts MODERATOR', async () => {
     const prisma = buildPrisma();
     const redis = buildRedis();
     (redis.client.incr as jest.Mock).mockImplementation((key: string) => {
-      if (key.startsWith('reports:ip:')) return Promise.resolve(11);
+      if (key.startsWith('reports:ip:')) return Promise.resolve(51);
       return Promise.resolve(1);
     });
 
@@ -252,7 +252,7 @@ describe('ReportsService.create', () => {
 
     await expect(
       service.create('u-1', { messageId: 'm-1', reason: ReportReason.SPAM }, '203.0.113.42'),
-    ).rejects.toThrow(/Report rate limit of 10\/minute/);
+    ).rejects.toThrow(/Report rate limit of 50\/minute/);
 
     (prisma.user.findUnique as jest.Mock).mockResolvedValue({ status: 'ACTIVE', role: UserRole.MODERATOR });
     (prisma.message.findUnique as jest.Mock).mockResolvedValue({

@@ -1,5 +1,5 @@
 import { Job } from 'bullmq';
-import { SmsService, SMS_SERVICE_TOKEN } from '../sms.tokens';
+import { SmsService } from '../sms.tokens';
 import { SmsOtpJobData } from './sms-otp-job.interface';
 import { SmsOtpProcessor } from './sms-otp.processor';
 import { QueueMetrics } from '../../metrics/queue.metrics';

@@ -6,7 +6,6 @@ import {
   HttpStatus,
   Logger,
 } from '@nestjs/common';
-import { GqlArgumentsHost } from '@nestjs/graphql';
 import { Request, Response } from 'express';
 
 @Catch()
@@ -30,9 +29,9 @@ export class HttpExceptionFilter implements ExceptionFilter {
     const message = isHttp
       ? (() => {
           const res = exception.getResponse();
-          return typeof res === 'string'
-            ? res
-            : (res as Record<string, unknown>).message ?? exception.message;
+          if (typeof res === 'string') return res;
+          const raw = (res as Record<string, unknown>).message ?? exception.message;
+          return Array.isArray(raw) ? raw.join(', ') : String(raw);
         })()
       : 'Internal server error';
 

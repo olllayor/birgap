@@ -24,7 +24,6 @@ jest.mock('@aws-sdk/s3-request-presigner', () => {
 
 describe('R2Service', () => {
   let service: R2Service;
-  let configService: ConfigService;
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
@@ -47,7 +46,6 @@ describe('R2Service', () => {
 
     service = module.get<R2Service>(R2Service);
     service.onModuleInit();
-    configService = module.get<ConfigService>(ConfigService);
   });
 
   it('should be defined', () => {

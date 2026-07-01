@@ -278,6 +278,8 @@ User (1) ──── (N) AdminAuditLog  (as actor,   actorUserId nullable)
 - Ephemeral state for active connections
 - Ping/pong health monitoring
 - Connection resilience with exponential backoff retry strategy
+- Health status tracking (`isHealthy()` method) for internal fail-open decisions
+- Password-protected in both local Docker and production environments
 
 ### Cloudflare R2 (S3-Compatible)
 - Encrypted backup blob storage

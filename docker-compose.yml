@@ -21,11 +21,11 @@ services:
     container_name: birgap-redis
     ports:
       - "6379:6379"
-    command: ["redis-server", "--appendonly", "yes"]
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:-birgap-dev}"]
     volumes:
       - birgap-redis-data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-birgap-dev}", "ping"]
       interval: 5s
       timeout: 3s
       retries: 10

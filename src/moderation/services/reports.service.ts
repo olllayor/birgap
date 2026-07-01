@@ -6,7 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Prisma, ReportReason, ReportResolution, ReportStatus, UserRole } from '@prisma/client';
+import { Prisma, ReportResolution, ReportStatus, UserRole } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RedisService } from '../../redis/redis.service';
 import { AuditLogService } from './audit-log.service';
@@ -78,14 +78,14 @@ export class ReportsService {
     }
 
     if (reporter.role === UserRole.USER) {
-      const dailyLimit = this.config.get<number>('REPORTS_DAILY_LIMIT', 50);
+      const dailyLimit = this.config.get<number>('REPORTS_DAILY_LIMIT', 200);
       const allowed = await this.checkDailyLimit(reporterUserId, dailyLimit);
       if (!allowed) {
         throw new ConflictException(`Daily report limit of ${dailyLimit} reached`);
       }
 
       if (clientIp) {
-        const ipLimit = this.config.get<number>('REPORTS_PER_IP_PER_MINUTE', 10);
+        const ipLimit = this.config.get<number>('REPORTS_PER_IP_PER_MINUTE', 50);
         const ipAllowed = await this.checkIpRateLimit(clientIp, ipLimit);
         if (!ipAllowed) {
           throw new ConflictException(`Report rate limit of ${ipLimit}/minute reached for this IP`);
@@ -263,7 +263,6 @@ export class ReportsService {
   }
 
   private async trackCollusion(messageId: string): Promise<void> {
-    const threshold = this.config.get<number>('REPORTS_COLLUSION_THRESHOLD', 10);
     const windowHours = this.config.get<number>('REPORTS_COLLUSION_WINDOW_HOURS', 1);
     const key = REPORTS_QUEUE_COLLUSION_KEY(messageId);
     const count = await this.redis.client.incr(key);

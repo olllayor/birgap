@@ -29,7 +29,7 @@ Edit `.env` with your configuration. For local development, the defaults work:
 NODE_ENV=development
 PORT=3000
 DATABASE_URL=postgresql://postgres:postgres@localhost:5432/birgap?schema=public&connection_limit=10
-REDIS_URL=redis://localhost:6379
+REDIS_URL=redis://:birgap-dev@localhost:6379
 JWT_ACCESS_SECRET=your-super-secret-key-at-least-24-chars
 JWT_ACCESS_TTL=15m
 REFRESH_TOKEN_TTL_DAYS=30
@@ -62,7 +62,7 @@ docker compose up -d
 
 This starts:
 - PostgreSQL on port 5432
-- Redis on port 6379
+- Redis on port 6379 (password: `birgap-dev`)
 
 ### 4. Run Database Migrations
 

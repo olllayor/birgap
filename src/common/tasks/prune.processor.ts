@@ -19,7 +19,7 @@ export class PruneProcessor extends WorkerHost {
     super();
   }
 
-  async process(job: Job<PruneJobData>): Promise<void> {
+  async process(_job: Job<PruneJobData>): Promise<void> {
     this.logger.log('Starting daily database pruning...');
     const now = new Date();
     const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);

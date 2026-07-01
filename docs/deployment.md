@@ -561,6 +561,22 @@ npx prisma migrate resolve --rolled-back <migration-name>
 5. Verify health checks
 6. Update DNS if needed
 
+## Graceful Shutdown
+
+The application handles `SIGTERM` and `SIGINT` signals to ensure clean shutdown:
+
+1. **BullMQ workers** drain in-flight jobs before exiting
+2. **Prisma** disconnects from PostgreSQL cleanly
+3. **Redis** connections are closed
+4. **WebSocket gateway** notifies connected clients and cleans up Redis socket mappings
+
+In Docker/Kubernetes, the container receives `SIGTERM` when stopped. The default timeout is handled by the orchestrator — ensure it's at least 10-15 seconds to allow in-flight requests to complete.
+
+```bash
+# Test graceful shutdown locally
+kill -SIGTERM <pid>
+```
+
 ## Performance Tuning
 
 ### Node.js

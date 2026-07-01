@@ -1,4 +1,5 @@
 import { Logger, ValidationPipe } from '@nestjs/common';
+import { HttpLoggingInterceptor } from './common/interceptors/http-logging.interceptor';
 import { ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
 import { NestExpressApplication } from '@nestjs/platform-express';
@@ -60,6 +61,7 @@ async function bootstrap() {
     next();
   });
 
+  app.useGlobalInterceptors(new HttpLoggingInterceptor());
   app.useGlobalFilters(new HttpExceptionFilter());
   app.useGlobalPipes(
     new ValidationPipe({
@@ -85,8 +87,10 @@ async function bootstrap() {
   logger.log(`Server running on port ${port}`);
 
   for (const signal of ['SIGTERM', 'SIGINT']) {
-    process.on(signal, () => {
+    process.on(signal, async () => {
       logger.log(`${signal} received, starting graceful shutdown...`);
+      await app.close();
+      process.exit(0);
     });
   }
 }

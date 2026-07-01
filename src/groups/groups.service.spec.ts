@@ -1,4 +1,4 @@
-import { ForbiddenException, NotFoundException } from '@nestjs/common';
+import { ForbiddenException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Queue } from 'bullmq';
 import { PrismaService } from '../prisma/prisma.service';
@@ -16,8 +16,6 @@ const mockMediaService = {
 } as unknown as MediaService;
 
 describe('GroupsService', () => {
-  let service: GroupsService;
-
   beforeEach(() => {
     const mockPrisma: {
       group: { create: jest.Mock };
@@ -67,7 +65,7 @@ describe('GroupsService', () => {
       add: jest.fn(),
     } as unknown as Queue;
 
-    service = new GroupsService(prisma, redis, mockConfigService, mockMediaService, fanoutQueue, editFanoutQueue);
+    new GroupsService(prisma, redis, mockConfigService, mockMediaService, fanoutQueue, editFanoutQueue);
   });
 
   describe('createGroup', () => {

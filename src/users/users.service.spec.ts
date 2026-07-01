@@ -141,6 +141,24 @@ describe('UsersService', () => {
         service.updateProfile('user-1', { username: 'bob_new' })
       ).rejects.toThrow(BadRequestException);
     });
+
+    it('throws BadRequestException on unique constraint violation (race condition)', async () => {
+      const prismaError = Object.assign(new Error('Unique constraint failed'), {
+        code: 'P2002',
+        meta: { target: ['username'] },
+      });
+      const prisma = {
+        user: {
+          findFirst: jest.fn().mockResolvedValue(null),
+          update: jest.fn().mockRejectedValue(prismaError),
+        },
+      };
+      const service = new UsersService(prisma as unknown as PrismaService);
+
+      await expect(
+        service.updateProfile('user-1', { username: 'race_condition_user' })
+      ).rejects.toThrow(BadRequestException);
+    });
   });
 
   describe('searchByUsername', () => {
@@ -150,30 +168,55 @@ describe('UsersService', () => {
     });
 
     it('finds active users by startsWith match', async () => {
-      const mockResult = [{ id: 'user-1', username: 'alice_smith' }];
+      const mockResult = [{ id: 'user-1', username: 'alice_smith', profileAvatarUrl: null }];
       const prisma = {
         user: { findMany: jest.fn().mockResolvedValue(mockResult) },
       };
       const service = new UsersService(prisma as unknown as PrismaService);
 
-      await expect(service.searchByUsername('ali')).resolves.toEqual(mockResult);
-      expect(prisma.user.findMany).toHaveBeenCalledWith({
-        where: {
-          username: {
-            startsWith: 'ali',
-            mode: 'insensitive',
-          },
-          status: 'ACTIVE',
-        },
-        take: 10,
-        select: {
-          id: true,
-          username: true,
-          profileAvatarUrl: true,
-          encryptedProfile: true,
-          profileKeyHash: true,
-        },
+      const result = await service.searchByUsername('ali');
+      expect(result).toEqual(mockResult);
+      expect(result[0]).not.toHaveProperty('encryptedProfile');
+      expect(result[0]).not.toHaveProperty('profileKeyHash');
+
+      const call = prisma.user.findMany.mock.calls[0][0];
+      expect(call.where.username.mode).toBe('insensitive');
+      expect(call.where.status).toBe('ACTIVE');
+      expect(call.take).toBe(10);
+      expect(call.select).toEqual({
+        id: true,
+        username: true,
+        profileAvatarUrl: true,
       });
+    });
+
+    it('excludes the requesting user from results', async () => {
+      const mockResult = [
+        { id: 'user-1', username: 'alice' },
+        { id: 'user-2', username: 'alice_wonder' },
+      ];
+      const prisma = {
+        user: { findMany: jest.fn().mockResolvedValue(mockResult) },
+      };
+      const service = new UsersService(prisma as unknown as PrismaService);
+
+      await service.searchByUsername('alice', 'user-1');
+      const call = prisma.user.findMany.mock.calls[0][0];
+      expect(call.where.id).toEqual({ not: 'user-1' });
+      expect(call.where.status).toBe('ACTIVE');
+    });
+
+    it('returns all results when currentUserId is not provided', async () => {
+      const mockResult = [{ id: 'user-1', username: 'alice' }];
+      const prisma = {
+        user: { findMany: jest.fn().mockResolvedValue(mockResult) },
+      };
+      const service = new UsersService(prisma as unknown as PrismaService);
+
+      await service.searchByUsername('alice');
+      const call = prisma.user.findMany.mock.calls[0][0];
+      expect(call.where.status).toBe('ACTIVE');
+      expect(call.where).not.toHaveProperty('id');
     });
   });
 });

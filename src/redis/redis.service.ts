@@ -6,6 +6,7 @@ import Redis from 'ioredis';
 export class RedisService implements OnModuleDestroy {
   private readonly logger = new Logger(RedisService.name);
   readonly client: Redis;
+  private connected = false;
 
   constructor(config: ConfigService) {
     this.client = new Redis(config.getOrThrow<string>('REDIS_URL'), {
@@ -17,9 +18,17 @@ export class RedisService implements OnModuleDestroy {
         return retryable.some((code) => error.message.includes(code));
       },
     });
+    this.client.on('ready', () => {
+      this.connected = true;
+    });
     this.client.on('error', (error) => {
+      this.connected = false;
       this.logger.warn(`Redis error: ${error.message}`);
     });
+  }
+
+  isHealthy(): boolean {
+    return this.connected && this.client.status === 'ready';
   }
 
   async onModuleDestroy() {

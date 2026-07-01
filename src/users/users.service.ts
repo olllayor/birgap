@@ -105,6 +105,26 @@ export class UsersService {
     });
   }
 
+  async getMe(userId: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        phoneMasked: true,
+        username: true,
+        profileAvatarUrl: true,
+        status: true,
+        role: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    });
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+    return user;
+  }
+
   async updateProfile(userId: string, dto: UpdateProfileDto) {
     if (dto.username) {
       const existingUser = await this.prisma.user.findFirst({
@@ -118,45 +138,51 @@ export class UsersService {
       }
     }
 
-    return this.prisma.user.update({
-      where: { id: userId },
-      data: {
-        ...(dto.username !== undefined && { username: dto.username }),
-        ...(dto.profileAvatarUrl !== undefined && { profileAvatarUrl: dto.profileAvatarUrl }),
-        ...(dto.encryptedProfile !== undefined && { encryptedProfile: dto.encryptedProfile as Prisma.InputJsonValue }),
-        ...(dto.profileKeyHash !== undefined && { profileKeyHash: dto.profileKeyHash }),
-      },
-      select: {
-        id: true,
-        phoneHash: true,
-        username: true,
-        profileAvatarUrl: true,
-        encryptedProfile: true,
-        profileKeyHash: true,
-        updatedAt: true,
-      },
-    });
+    try {
+      return await this.prisma.user.update({
+        where: { id: userId },
+        data: {
+          ...(dto.username !== undefined && { username: dto.username }),
+          ...(dto.profileAvatarUrl !== undefined && { profileAvatarUrl: dto.profileAvatarUrl }),
+          ...(dto.encryptedProfile !== undefined && { encryptedProfile: dto.encryptedProfile as Prisma.InputJsonValue }),
+          ...(dto.profileKeyHash !== undefined && { profileKeyHash: dto.profileKeyHash }),
+        },
+        select: {
+          id: true,
+          phoneHash: true,
+          username: true,
+          profileAvatarUrl: true,
+          encryptedProfile: true,
+          profileKeyHash: true,
+          updatedAt: true,
+        },
+      });
+    } catch (error: any) {
+      if (error?.code === 'P2002') {
+        throw new BadRequestException('Username is already taken');
+      }
+      throw error;
+    }
   }
 
-  async searchByUsername(usernameQuery: string) {
+  async searchByUsername(usernameQuery: string, currentUserId?: string) {
     if (!usernameQuery || usernameQuery.trim().length < 3) {
       throw new BadRequestException('Search query must be at least 3 characters');
     }
     return this.prisma.user.findMany({
       where: {
         username: {
-          startsWith: usernameQuery,
+          contains: usernameQuery,
           mode: 'insensitive',
         },
         status: 'ACTIVE',
+        ...(currentUserId && { id: { not: currentUserId } }),
       },
       take: 10,
       select: {
         id: true,
         username: true,
         profileAvatarUrl: true,
-        encryptedProfile: true,
-        profileKeyHash: true,
       },
     });
   }

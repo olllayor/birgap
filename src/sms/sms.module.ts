@@ -30,16 +30,12 @@ import { SMS_SERVICE_TOKEN } from './sms.tokens';
     {
       provide: SMS_SERVICE_TOKEN,
       inject: [SayqalSmsService, MockSmsService, ConfigService],
-      useFactory: (
-        sayqal: SayqalSmsService,
-        mock: MockSmsService,
-        config: ConfigService,
-      ) => {
+      useFactory: (sayqal: SayqalSmsService, mock: MockSmsService, config: ConfigService) => {
         const mode = config.get<string>('OTP_MODE') ?? 'mock';
         return mode === 'sayqal' ? sayqal : mock;
       },
     },
   ],
-  exports: [SMS_SERVICE_TOKEN, SayqalSmsService, MockSmsService],
+  exports: [SMS_SERVICE_TOKEN, SayqalSmsService, MockSmsService, BullModule],
 })
 export class SmsModule {}
