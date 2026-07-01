@@ -14,6 +14,11 @@ import { QueueMetrics } from './queue.metrics';
     RedisMetrics,
     QueueMetrics,
     makeCounterProvider({
+      name: 'redis_cache_operations_total',
+      help: 'Total number of Redis cache operations by type and result',
+      labelNames: ['operation', 'result'],
+    }),
+    makeCounterProvider({
       name: 'queue_job_completed_total',
       help: 'Total number of completed queue jobs',
       labelNames: ['queue'],
