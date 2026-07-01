@@ -8,8 +8,6 @@ import { MockSmsService } from './mock-sms.service';
 import { SmsOtpProcessor } from './queue/sms-otp.processor';
 import { SMS_SERVICE_TOKEN } from './sms.tokens';
 
-export { SmsService, SMS_SERVICE_TOKEN } from './sms.tokens';
-
 @Module({
   imports: [
     ConfigModule,
