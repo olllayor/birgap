@@ -93,8 +93,8 @@ importers:
         specifier: ^5.4.2
         version: 5.10.1
       joi:
-        specifier: ^17.13.3
-        version: 17.13.3
+        specifier: ^17.13.4
+        version: 17.13.4
       libphonenumber-js:
         specifier: ^1.13.7
         version: 1.13.7
@@ -225,6 +225,7 @@ packages:
   '@aws-sdk/core@3.974.11':
     resolution: {integrity: sha512-QpnINq5FZH6EOaDEkmHdT7eUunbvD27pDNQypaWjFyYz7Zl1q3UCMQErBZxpmfGfI7MvI2TlK8KTkgNpv8b1ug==}
     engines: {node: '>=20.0.0'}
+    deprecated: Deprecated due to an error deserialization bug in JSON 1.0 protocol services, see https://github.com/aws/aws-sdk-js-v3/pull/8031. Newer version available.
 
   '@aws-sdk/crc64-nvme@3.972.8':
     resolution: {integrity: sha512-fVfUCL/Xh2zINYMPZvj+iBn6XWouQf0DAnjaWCI9MkmqXzL2Iy5FoQB8O7syFe6gN6AH1ecDDU58T51Ou0kFkA==}
@@ -2981,8 +2982,8 @@ packages:
     resolution: {integrity: sha512-AC/7JofJvZGrrneWNaEnJeOLUx+JlGt7tNa0wZiRPT4MY1wmfKjt2+6O2p2uz2+skll8OZZmJMNqeke7kKbNgQ==}
     hasBin: true
 
-  joi@17.13.3:
-    resolution: {integrity: sha512-otDA4ldcIx+ZXsKHWmp0YizCweVRZG96J10b0FevjfuncLO1oX59THoAmHkNubYJ+9gWsYsp5k8v4ib6oDv1fA==}
+  joi@17.13.4:
+    resolution: {integrity: sha512-1RuuER6kmt8K8I3nIWvPZKi5RQCb568ZPyY4Pwjlua+yo+63ZTmIwxLZH0heBmiKN4uxjvCiarDrjaeH84xicQ==}
 
   jose@4.15.9:
     resolution: {integrity: sha512-1vUQX+IdDMVPj4k8kOxgUqlcK518yluMuGZwqlr44FS1ppZB/5GWh4rZG89erpOBOJjU/OBsnCVFfapsRz6nEA==}
@@ -7921,7 +7922,7 @@ snapshots:
 
   jiti@2.7.0: {}
 
-  joi@17.13.3:
+  joi@17.13.4:
     dependencies:
       '@hapi/hoek': 9.3.0
       '@hapi/topo': 5.1.0
