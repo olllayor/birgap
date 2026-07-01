@@ -41,6 +41,7 @@ export class DirectThreadsController {
     const threads = await this.directThreadsService.findByUserWithDetails(user.userId);
     return { threads };
   }
+
   @Get(':id')
   @ApiOperation({ summary: 'Get a direct thread by ID with resolved user details' })
   async getThread(
