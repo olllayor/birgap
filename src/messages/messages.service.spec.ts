@@ -1,3 +1,4 @@
+import { ForbiddenException } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
@@ -94,6 +95,7 @@ describe('MessagesService', () => {
 
     const makePrisma = (tx: ReturnType<typeof makeTx>) => ({
       message: { findUnique: jest.fn().mockResolvedValue(null) },
+      userBlock: { findFirst: jest.fn().mockResolvedValue(null) },
       $transaction: jest.fn((callback: (tx: ReturnType<typeof makeTx>) => unknown) => callback(tx)),
     });
 
@@ -135,6 +137,7 @@ describe('MessagesService', () => {
       };
       const prisma = {
         message: { findUnique: jest.fn().mockResolvedValue(null) },
+        userBlock: { findFirst: jest.fn().mockResolvedValue(null) },
         $transaction: jest.fn((callback: (tx: unknown) => unknown) => callback(tx)),
       };
       const events = { emit: jest.fn() } as unknown as EventEmitter2;
@@ -179,6 +182,7 @@ describe('MessagesService', () => {
       const tx = makeTx();
       const prisma = {
         message: { findUnique: jest.fn().mockResolvedValue(null) },
+        userBlock: { findFirst: jest.fn().mockResolvedValue(null) },
         $transaction: jest.fn((callback: (tx: ReturnType<typeof makeTx>) => unknown) =>
           callback(tx),
         ),
@@ -211,6 +215,38 @@ describe('MessagesService', () => {
         }),
       ).rejects.toThrow('One or more mediaIds do not exist');
       expect(tx.message.create).not.toHaveBeenCalled();
+      expect(events.emit).not.toHaveBeenCalled();
+    });
+
+    it('throws ForbiddenException when a block exists in either direction', async () => {
+      const tx = makeTx();
+      const prisma = {
+        ...makePrisma(tx),
+        userBlock: { findFirst: jest.fn().mockResolvedValue({ id: 'block-1' }) },
+      };
+      const events = { emit: jest.fn() } as unknown as EventEmitter2;
+      const service = new MessagesService(prisma as unknown as PrismaService, events, mockUnreadService, mockConfigService, mockPushService, mockMediaService, mockAuditLogService, mockFanoutQueue);
+
+      await expect(
+        service.send('user-1', {
+          senderDeviceId: 'device-1',
+          recipientUserId: 'user-2',
+          idempotencyKey: 'idem-blocked',
+          envelopes: [{ recipientDeviceId: 'device-2', ciphertext: { body: 'enc' } }],
+        }),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+
+      expect(prisma.userBlock.findFirst).toHaveBeenCalledWith({
+        where: {
+          OR: [
+            { blockerId: 'user-1', blockedId: 'user-2' },
+            { blockerId: 'user-2', blockedId: 'user-1' },
+          ],
+        },
+        select: { id: true },
+      });
+      // Block is checked before the transaction — no thread/message work happens.
+      expect(prisma.$transaction).not.toHaveBeenCalled();
       expect(events.emit).not.toHaveBeenCalled();
     });
   });
@@ -277,10 +313,15 @@ describe('MessagesService', () => {
 
       await service.getPending('user-1', 'device-1', '50', 50);
 
+      // PENDING envelopes are always returned (guards against the commit-visibility
+      // skip); only DELIVERED ones are gated by the `after` watermark.
       expect(prisma.messageEnvelope.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: expect.objectContaining({
-            envelopeSequence: { gt: 50n },
+            OR: [
+              { status: 'PENDING' },
+              { status: 'DELIVERED', envelopeSequence: { gt: 50n } },
+            ],
           }),
         }),
       );

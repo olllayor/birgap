@@ -9,6 +9,8 @@ import { EditMessageDto } from './dto/edit-message.dto';
 import { ForwardMessageDto } from './dto/forward-message.dto';
 import { MarkAllReadDto } from './dto/mark-all-read.dto';
 import { PendingQueryDto } from './dto/pending-query.dto';
+import { PinMessageDto } from './dto/pin-message.dto';
+import { PinnedQueryDto } from './dto/pinned-query.dto';
 import { SendMessageDto } from './dto/send-message.dto';
 import { SyncQueryDto } from './dto/sync-query.dto';
 import { MessagesService } from './messages.service';
@@ -38,6 +40,11 @@ export class MessagesController {
   @Get('unread-counts')
   getUnreadCounts(@CurrentUser() user: AuthenticatedUser) {
     return this.messagesService.getUnreadCounts(user.userId);
+  }
+
+  @Get('pinned')
+  listPinned(@CurrentUser() user: AuthenticatedUser, @Query() query: PinnedQueryDto) {
+    return this.messagesService.listPinned(user.userId, query.threadType, query.threadId, query.deviceId);
   }
 
   @Post('mark-all-read')
@@ -78,5 +85,23 @@ export class MessagesController {
     @Query() query: SyncQueryDto,
   ) {
     return this.messagesService.sync(user.userId, query.deviceId, query.since, query.limit);
+  }
+
+  @Post(':messageId/pin')
+  pin(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('messageId') messageId: string,
+    @Body() dto: PinMessageDto,
+  ) {
+    return this.messagesService.pinMessage(user.userId, messageId, dto);
+  }
+
+  @Delete(':messageId/pin')
+  unpin(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('messageId') messageId: string,
+    @Body() dto: PinMessageDto,
+  ) {
+    return this.messagesService.unpinMessage(user.userId, messageId, dto);
   }
 }

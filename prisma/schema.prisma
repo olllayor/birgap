@@ -134,28 +134,53 @@ model User {
   updatedAt   DateTime   @updatedAt
 
   username          String?     @unique
+  usernameChangedAt DateTime?
   profileAvatarUrl  String?
   encryptedProfile  Json?
   profileKeyHash    String?
   strikeCount       Int         @default(0)
   lastStrikeAt      DateTime?
 
-  devices         Device[]
-  refreshTokens   RefreshToken[]
-  sentMessages    Message[]        @relation("SentMessages")
-  threadsAsUserA  DirectThread[]   @relation("ThreadUserA")
-  threadsAsUserB  DirectThread[]   @relation("ThreadUserB")
-  backups         BackupBlob[]
-  groupMembers    GroupMember[]
-  reactions       MessageReaction[]
-  media           MessageMedia[]
+  devices          Device[]
+  refreshTokens    RefreshToken[]
+  sentMessages     Message[]        @relation("SentMessages")
+  threadsAsUserA   DirectThread[]   @relation("ThreadUserA")
+  threadsAsUserB   DirectThread[]   @relation("ThreadUserB")
+  backups          BackupBlob[]
+  groupMembers     GroupMember[]
+  reactions        MessageReaction[]
+  media            MessageMedia[]
+  receivedEnvelopes MessageEnvelope[] @relation("RecipientUserEnvelopes")
+  hiddenMessages   HiddenMessage[]
+  unreadCounters   UnreadCounter[]
+  pinnedMessages   PinnedMessage[]
   filedReports    Report[]         @relation("ReportFiler")
   suspensionsAsTarget  UserSuspension[] @relation("SuspensionTarget")
   suspensionsAsActor   UserSuspension[] @relation("SuspensionActor")
   suspensionsAsRevoker UserSuspension[] @relation("SuspensionRevoker")
+  blocksMade       UserBlock[]     @relation("Blocker")
+  blocksReceived   UserBlock[]     @relation("Blocked")
+  threadSettings   ThreadSetting[]
 
   @@index([role])
   @@index([username])
+}
+
+// Telegram-style user blocking. A row means blocker no longer wants contact
+// from blocked: direct sends are rejected, typing indicators are dropped, and
+// presence is hidden from the blocked user. Enforcement is app-level (messages
+// service, users service, realtime gateway).
+model UserBlock {
+  id        String   @id @default(uuid()) @db.Uuid
+  blockerId String   @db.Uuid
+  blockedId String   @db.Uuid
+  createdAt DateTime @default(now())
+
+  blocker User @relation("Blocker", fields: [blockerId], references: [id], onDelete: Cascade)
+  blocked User @relation("Blocked", fields: [blockedId], references: [id], onDelete: Cascade)
+
+  @@unique([blockerId, blockedId])
+  @@index([blockedId])
 }
 
 model Device {
@@ -219,11 +244,32 @@ model DirectThread {
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
-  userA    User      @relation("ThreadUserA", fields: [userAId], references: [id], onDelete: Cascade)
-  userB    User      @relation("ThreadUserB", fields: [userBId], references: [id], onDelete: Cascade)
+  userA    User            @relation("ThreadUserA", fields: [userAId], references: [id], onDelete: Cascade)
+  userB    User            @relation("ThreadUserB", fields: [userBId], references: [id], onDelete: Cascade)
   messages Message[]
+  settings ThreadSetting[]
 
   @@unique([userAId, userBId])
+}
+
+// Per-user, per-direct-thread settings (currently just mute). A mutedUntil in
+// the future suppresses FCM push wakeups for that user's devices on new
+// messages in the thread; socket delivery and unread counting are unaffected.
+// "Muted forever" is stored as a far-future timestamp (9999-12-31), which
+// leaves room for timed mutes later without a schema change.
+model ThreadSetting {
+  id         String    @id @default(uuid()) @db.Uuid
+  userId     String    @db.Uuid
+  threadId   String    @db.Uuid
+  mutedUntil DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  user   User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  thread DirectThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, threadId])
+  @@index([threadId])
 }
 
 model Message {
@@ -241,17 +287,25 @@ model Message {
   deletedAt            DateTime?
   editedAt             DateTime?
   lastEditIdempotencyKey String?
+  // Set exactly once when group fan-out has broadcast this message. Used as an
+  // idempotency marker so a retried fan-out job does not re-emit realtime/push.
+  fannedOutAt          DateTime?
 
   thread       DirectThread?    @relation(fields: [threadId], references: [id], onDelete: Cascade)
   group        Group?           @relation(fields: [groupId], references: [id], onDelete: Cascade)
   sender       User             @relation("SentMessages", fields: [senderUserId], references: [id], onDelete: Cascade)
-  senderDevice Device           @relation("SenderDeviceMessages", fields: [senderDeviceId], references: [id], onDelete: Restrict)
+  // Cascade (was Restrict): a device is only hard-deleted when its owner is
+  // deleted, and a device's sent messages belong to that same owner — so they are
+  // already being removed. Restrict here made User deletion impossible.
+  senderDevice Device           @relation("SenderDeviceMessages", fields: [senderDeviceId], references: [id], onDelete: Cascade)
   replyTo      Message?         @relation("MessageReplies", fields: [replyToMessageId], references: [id], onDelete: SetNull)
   replies      Message[]        @relation("MessageReplies")
   envelopes    MessageEnvelope[]
   reactions    MessageReaction[]
   reports      Report[]
   media        MessageMedia[]
+  hiddenBy     HiddenMessage[]
+  pins         PinnedMessage[]
 
   @@unique([senderDeviceId, idempotencyKey])
   @@unique([threadId, threadSequence])
@@ -303,7 +357,12 @@ model MessageEnvelope {
   updatedAt         DateTime       @updatedAt
 
   message         Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
-  recipientDevice Device  @relation("RecipientDeviceEnvelopes", fields: [recipientDeviceId], references: [id], onDelete: Restrict)
+  // Cascade (was Restrict): deleting a device removes that device's inbox copies.
+  // Restrict blocked User deletion because a user's device is the recipient of
+  // envelopes belonging to other users' (non-deleted) messages.
+  recipientDevice Device  @relation("RecipientDeviceEnvelopes", fields: [recipientDeviceId], references: [id], onDelete: Cascade)
+  // Referential integrity for the recipient user (previously a bare column).
+  recipientUser   User    @relation("RecipientUserEnvelopes", fields: [recipientUserId], references: [id], onDelete: Cascade)
 
   @@unique([messageId, recipientDeviceId])
   @@index([recipientDeviceId, status, envelopeSequence])
@@ -410,6 +469,10 @@ model UnreadCounter {
   count      Int      @default(0)
   updatedAt  DateTime @updatedAt
 
+  // threadId is polymorphic (direct thread or group) so it stays app-enforced,
+  // but the owning user now has referential integrity + cascade cleanup.
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
   @@id([userId, threadType, threadId])
   @@index([userId])
 }
@@ -419,7 +482,30 @@ model HiddenMessage {
   messageId String   @db.Uuid
   createdAt DateTime @default(now())
 
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  message   Message  @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
   @@id([userId, messageId])
+}
+
+model PinnedMessage {
+  id             String   @id @default(uuid()) @db.Uuid
+  // threadType/threadId are polymorphic (direct thread or group), so they stay
+  // app-enforced — same pattern as UnreadCounter. The message FK gives cascade
+  // cleanup when a message is hard-deleted.
+  threadType     String
+  threadId       String   @db.Uuid
+  messageId      String   @db.Uuid
+  pinnedByUserId String   @db.Uuid
+  pinnedAt       DateTime @default(now())
+
+  message  Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  pinnedBy User    @relation(fields: [pinnedByUserId], references: [id], onDelete: Cascade)
+
+  @@unique([threadType, threadId, messageId])
+  @@index([threadType, threadId, pinnedAt])
+  @@index([messageId])
+  @@index([pinnedByUserId])
 }
 
 model MessageReaction {

@@ -9,8 +9,21 @@ import {
   IsUUID,
   MaxLength,
   MinLength,
+  ValidateNested,
+  ArrayMinSize,
 } from 'class-validator';
+import { Type } from 'class-transformer';
 import { MessageContentType } from '../../messages/enums/content-type.enum';
+
+class GroupMessageEnvelopeDto {
+  @ApiProperty()
+  @IsUUID()
+  recipientDeviceId!: string;
+
+  @ApiProperty({ description: 'Opaque client-encrypted payload for this device.' })
+  @IsDefined()
+  ciphertext!: unknown;
+}
 
 export class SendGroupMessageDto {
   @ApiProperty()
@@ -48,7 +61,14 @@ export class SendGroupMessageDto {
   @IsUUID('all', { each: true })
   mediaIds?: string[];
 
-  @ApiProperty({ description: 'Opaque group-key-encrypted payload.' })
-  @IsDefined()
-  ciphertext: unknown;
+  // C6 fix: accept per-device envelopes for E2EE, replacing the single ciphertext.
+  @ApiProperty({
+    type: [GroupMessageEnvelopeDto],
+    description: 'Per-device encrypted envelopes. Required for E2EE group messages.',
+  })
+  @IsArray()
+  @ArrayMinSize(1)
+  @ValidateNested({ each: true })
+  @Type(() => GroupMessageEnvelopeDto)
+  envelopes!: GroupMessageEnvelopeDto[];
 }

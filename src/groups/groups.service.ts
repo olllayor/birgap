@@ -9,6 +9,7 @@ import { CreateGroupDto } from './dto/create-group.dto';
 import { SendGroupMessageDto } from './dto/send-group-message.dto';
 import { EditGroupMessageDto } from './dto/edit-group-message.dto';
 import { MediaService } from '../messages/media.service';
+import { retryOnUniqueViolation } from '../common/utils/prisma-retry.util';
 
 @Injectable()
 export class GroupsService {
@@ -70,6 +71,10 @@ export class GroupsService {
         userId: id,
         role: 'MEMBER',
       })),
+      // The findMany pre-check above is racy — a concurrent addMembers can insert
+      // the same userId between the check and here, violating @@id([groupId,userId]).
+      // skipDuplicates makes the insert idempotent instead of throwing a 500.
+      skipDuplicates: true,
     });
 
     this.redis.invalidateGroupMemberIds(groupId).catch(() => {});
@@ -126,7 +131,10 @@ export class GroupsService {
       return { success: true, messageId: existing.id, queued: false };
     }
 
-    const result = await this.prisma.$transaction(async (tx) => {
+    // threadSequence is assigned read-max-then-insert. Two concurrent sends can
+    // read the same max and collide on @@unique([groupId, threadSequence]); retry
+    // on that conflict so the message is not dropped with a 500.
+    const result = await retryOnUniqueViolation(() => this.prisma.$transaction(async (tx) => {
       const existingTx = await tx.message.findUnique({
         where: {
           senderDeviceId_idempotencyKey: {
@@ -187,15 +195,32 @@ export class GroupsService {
         });
       }
 
+      // Validate the sender's own device is in the envelopes for sync
+      const ownDeviceInEnvelopes = dto.envelopes.some(
+        (env) => env.recipientDeviceId === dto.senderDeviceId,
+      );
+      if (!ownDeviceInEnvelopes) {
+        // Add a self-sync envelope (the client should have included one; this is a safety net)
+        dto.envelopes.push({
+          recipientDeviceId: dto.senderDeviceId,
+          ciphertext: { type: 'sync', body: '' },
+        });
+      }
+
       return message;
-    });
+    }), 'threadSequence');
 
     await this.fanoutQueue.add('fanout', {
       messageId: result.id,
       groupId,
       senderUserId,
       senderDeviceId: dto.senderDeviceId,
-      ciphertext: dto.ciphertext,
+      // C6 fix: pass per-device envelopes instead of a single ciphertext
+      envelopes: dto.envelopes.map((env) => ({
+        recipientDeviceId: env.recipientDeviceId,
+        senderUserId,
+        ciphertext: env.ciphertext,
+      })),
       threadSequence: result.threadSequence,
       replyToMessageId: result.replyToMessageId,
       contentType: dto.contentType ?? 'TEXT',

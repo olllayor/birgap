@@ -1,10 +1,12 @@
-import { createHash } from 'node:crypto';
+import { createHmac } from 'node:crypto';
 import { PrismaClient, UserRole } from '@prisma/client';
 
 const prisma = new PrismaClient();
 
+const PHONE_HASH_PEPPER = process.env.PHONE_HASH_PEPPER ?? '';
+
 function hashPhone(phone: string): string {
-  return createHash('sha256').update(phone).digest('hex');
+  return createHmac('sha256', PHONE_HASH_PEPPER).update(phone).digest('hex');
 }
 
 function parseArgs(argv: string[]): { command: string; phone?: string; role?: UserRole; reason?: string } {

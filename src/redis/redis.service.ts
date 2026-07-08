@@ -63,6 +63,11 @@ export class RedisService implements OnModuleDestroy {
     return (await this.client.scard(`device:${deviceId}:sockets`)) > 0;
   }
 
+  async hasUserSocket(userId: string) {
+    await this.ensureConnected();
+    return (await this.client.scard(`user:${userId}:sockets`)) > 0;
+  }
+
   async getDevicesWithSockets(deviceIds: string[]): Promise<Set<string>> {
     if (deviceIds.length === 0) {
       return new Set();
@@ -151,6 +156,26 @@ export class RedisService implements OnModuleDestroy {
   async invalidateGroupMemberIds(groupId: string) {
     await this.ensureConnected();
     await this.client.del(`group:${groupId}:member_ids`);
+  }
+
+  // Direct-thread peer cache for presence fan-out — same pattern as the group
+  // member cache above. Short TTL keeps new threads visible within a minute.
+  async getThreadPeerIds(userId: string): Promise<string[] | null> {
+    await this.ensureConnected();
+    const peers = await this.client.smembers(`user:${userId}:thread-peers`);
+    return peers.length > 0 ? peers : null;
+  }
+
+  async setThreadPeerIds(userId: string, peerIds: string[]) {
+    await this.ensureConnected();
+    const key = `user:${userId}:thread-peers`;
+    const pipe = this.client.pipeline();
+    pipe.del(key);
+    if (peerIds.length > 0) {
+      pipe.sadd(key, ...peerIds);
+    }
+    pipe.expire(key, 60);
+    await pipe.exec();
   }
 
   private async ensureConnected() {

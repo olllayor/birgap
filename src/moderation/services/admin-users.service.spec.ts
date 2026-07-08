@@ -6,6 +6,7 @@ function buildPrisma() {
     user: { findUnique: jest.fn(), findMany: jest.fn() },
     report: { findMany: jest.fn() },
     userSuspension: { findMany: jest.fn() },
+    device: { findMany: jest.fn() },
   };
 }
 
@@ -29,6 +30,7 @@ describe('AdminUsersService.getDetail', () => {
       .mockResolvedValueOnce([{ id: 'rep-1' }])
       .mockResolvedValueOnce([{ id: 'rep-2' }]);
     (prisma.userSuspension.findMany as jest.Mock).mockResolvedValueOnce([{ id: 'susp-1' }]);
+    (prisma.device.findMany as jest.Mock).mockResolvedValueOnce([]);
 
     const service = new AdminUsersService(prisma as unknown as PrismaService);
     const result = await service.getDetail('u-1');

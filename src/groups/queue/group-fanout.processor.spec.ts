@@ -26,6 +26,9 @@ describe('GroupFanoutProcessor', () => {
       messageMedia: {
         findMany: jest.fn().mockResolvedValue([]),
       },
+      message: {
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
     } as unknown as PrismaService;
 
     const events = {
@@ -54,6 +57,9 @@ describe('GroupFanoutProcessor', () => {
       messageMedia: {
         findMany: jest.fn().mockResolvedValue([]),
       },
+      message: {
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
     } as unknown as PrismaService;
 
     const events = {
@@ -63,17 +69,21 @@ describe('GroupFanoutProcessor', () => {
     const testProcessor = new GroupFanoutProcessor(prisma, events, mockQueueMetrics, mockUnreadService);
 
     const job = {
-      data: {
-        messageId: 'msg-1',
-        groupId: 'group-1',
-        senderUserId: 'user-1',
-        senderDeviceId: 'dev-1-sender',
-        ciphertext: 'cipher',
-        threadSequence: 5,
-        replyToMessageId: null,
-        createdAt: new Date('2026-05-20T00:00:00Z').toISOString(),
-        mediaIds: [],
-      },
+	      data: {
+	        messageId: 'msg-1',
+	        groupId: 'group-1',
+	        senderUserId: 'user-1',
+	        senderDeviceId: 'dev-1-sender',
+	        envelopes: [
+	          { recipientDeviceId: 'dev-1-sync', senderUserId: 'user-1', ciphertext: 'cipher' },
+	          { recipientDeviceId: 'dev-2', senderUserId: 'user-1', ciphertext: 'cipher' },
+	          { recipientDeviceId: 'dev-3', senderUserId: 'user-1', ciphertext: 'cipher' },
+	        ],
+	        threadSequence: 5,
+	        replyToMessageId: null,
+	        createdAt: new Date('2026-05-20T00:00:00Z').toISOString(),
+	        mediaIds: [],
+	      },
     } as unknown as Job<GroupFanoutJobData>;
 
     const result = await testProcessor.process(job);

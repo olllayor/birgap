@@ -43,6 +43,11 @@ export class ListAuditLogQueryDto {
   @IsString()
   searchText?: string;
 
+  @ApiProperty({ required: false, description: 'Page number (ignored, cursor-based)' })
+  @IsOptional()
+  @Type(() => Number)
+  page?: number;
+
   @ApiProperty({ required: false })
   @IsOptional()
   @IsString()

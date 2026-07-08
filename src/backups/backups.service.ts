@@ -1,4 +1,4 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { PrismaService } from '../prisma/prisma.service';
@@ -23,7 +23,21 @@ export class BackupsService {
     return { uploadUrl, bucketKey, method: 'PUT' as const };
   }
 
+  /**
+   * The client echoes back the bucketKey it was handed by getUploadUrl, but we
+   * must not trust it: without this check a caller could PUT another user's key
+   * (`backups/<victimId>/...`) and then read it back via getCurrent (IDOR), or
+   * trigger deletion of a victim's blob through the stale-key cleanup path.
+   */
+  private assertOwnedBackupKey(userId: string, bucketKey: string) {
+    if (!bucketKey.startsWith(`backups/${userId}/`)) {
+      throw new ForbiddenException('Access denied');
+    }
+  }
+
   async putCurrent(userId: string, dto: PutBackupDto) {
+    this.assertOwnedBackupKey(userId, dto.bucketKey);
+
     const existing = await this.prisma.backupBlob.findUnique({
       where: { userId },
       select: { bucketKey: true },

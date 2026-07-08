@@ -149,6 +149,7 @@ describe('GroupsService', () => {
         data: [
           { groupId: 'group-1', userId: 'user-3', role: 'MEMBER' },
         ],
+        skipDuplicates: true,
       });
     });
   });
@@ -220,7 +221,7 @@ describe('GroupsService', () => {
         testService.queueGroupMessage('user-1', 'group-1', {
           senderDeviceId: 'dev-1',
           idempotencyKey: 'key-12345678',
-          ciphertext: 'cipher',
+          envelopes: [{ recipientDeviceId: '00000000-0000-0000-0000-000000000001', ciphertext: 'cipher' }],
         })
       ).rejects.toThrow(ForbiddenException);
     });
@@ -240,7 +241,7 @@ describe('GroupsService', () => {
         testService.queueGroupMessage('user-1', 'group-1', {
           senderDeviceId: 'dev-1',
           idempotencyKey: 'key-12345678',
-          ciphertext: 'cipher',
+          envelopes: [{ recipientDeviceId: '00000000-0000-0000-0000-000000000001', ciphertext: 'cipher' }],
         })
       ).resolves.toEqual({ success: true, messageId: 'msg-1', queued: false });
     });
@@ -272,7 +273,7 @@ describe('GroupsService', () => {
       const dto = {
         senderDeviceId: 'dev-1',
         idempotencyKey: 'key-12345678',
-        ciphertext: 'cipher',
+        envelopes: [{ recipientDeviceId: '00000000-0000-0000-0000-000000000001', ciphertext: 'cipher' }],
       };
 
       await expect(
@@ -291,18 +292,21 @@ describe('GroupsService', () => {
         },
       });
 
-      expect(queue.add).toHaveBeenCalledWith('fanout', {
-        messageId: 'msg-2',
-        groupId: 'group-1',
-        senderUserId: 'user-1',
-        senderDeviceId: 'dev-1',
-        ciphertext: 'cipher',
-        threadSequence: 6,
-        replyToMessageId: null,
-        contentType: 'TEXT',
-        createdAt: new Date('2026-01-01T00:00:00Z').toISOString(),
-        mediaIds: [],
-      });
+	      expect(queue.add).toHaveBeenCalledWith('fanout', {
+	        messageId: 'msg-2',
+	        groupId: 'group-1',
+	        senderUserId: 'user-1',
+	        senderDeviceId: 'dev-1',
+	        envelopes: [
+	          { recipientDeviceId: '00000000-0000-0000-0000-000000000001', senderUserId: 'user-1', ciphertext: 'cipher' },
+	          { recipientDeviceId: 'dev-1', senderUserId: 'user-1', ciphertext: { body: '', type: 'sync' } },
+	        ],
+	        threadSequence: 6,
+	        replyToMessageId: null,
+	        contentType: 'TEXT',
+	        createdAt: new Date('2026-01-01T00:00:00Z').toISOString(),
+	        mediaIds: [],
+	      });
     });
   });
 });

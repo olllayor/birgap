@@ -3,6 +3,7 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import { APP_GUARD } from '@nestjs/core';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
+import { ThrottlerStorageRedisService } from '@nest-lab/throttler-storage-redis';
 import { ScheduleModule } from '@nestjs/schedule';
 import { BullModule } from '@nestjs/bullmq';
 import { AuthModule } from './auth/auth.module';
@@ -36,18 +37,19 @@ import { ReactionsModule } from './reactions/reactions.module';
       isGlobal: true,
       validationSchema: envValidationSchema,
     }),
-    ThrottlerModule.forRoot([
-      {
-        name: 'default',
-        ttl: 60_000,
-        limit: 60,
-      },
-      {
-        name: 'auth',
-        ttl: 60_000,
-        limit: 5,
-      },
-    ]),
+    // Rate-limit counters live in Redis, not in-process memory. In-memory storage
+    // is per-instance and resets on every restart/deploy, which makes the auth
+    // (OTP/login) bucket trivially bypassable and useless across >1 node.
+    ThrottlerModule.forRootAsync({
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => ({
+        throttlers: [
+          { name: 'default', ttl: 60_000, limit: 60 },
+          { name: 'auth', ttl: 60_000, limit: 5 },
+        ],
+        storage: new ThrottlerStorageRedisService(config.getOrThrow<string>('REDIS_URL')),
+      }),
+    }),
     EventEmitterModule.forRoot(),
     ScheduleModule.forRoot(),
     BullModule.forRootAsync({

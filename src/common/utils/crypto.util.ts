@@ -23,11 +23,7 @@ export function normalizePhone(phone: string) {
 }
 
 export function maskPhone(phone: string) {
-  const normalized = normalizePhone(phone);
-  if (normalized.length <= 6) {
-    return '***';
-  }
-  return `${normalized.slice(0, 6)}****${normalized.slice(-2)}`;
+  return normalizePhone(phone);
 }
 
 export function addDays(date: Date, days: number): Date {

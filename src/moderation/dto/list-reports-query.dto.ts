@@ -14,6 +14,11 @@ export class ListReportsQueryDto {
   @IsEnum(ReportReason)
   reason?: ReportReason;
 
+  @ApiProperty({ required: false, description: 'Page number (ignored, cursor-based)' })
+  @IsOptional()
+  @Type(() => Number)
+  page?: number;
+
   @ApiProperty({ required: false, description: 'Cursor for pagination (report id)' })
   @IsOptional()
   @IsString()

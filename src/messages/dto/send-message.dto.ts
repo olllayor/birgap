@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
   ArrayMaxSize,
   ArrayMinSize,
@@ -15,9 +15,12 @@ import {
 } from 'class-validator';
 import { MessageContentType } from '../enums/content-type.enum';
 
+const toLowerCase = ({ value }: { value: string }) => value?.toLowerCase();
+
 export class MessageEnvelopeDto {
   @ApiProperty()
   @IsUUID()
+  @Transform(toLowerCase)
   recipientDeviceId!: string;
 
   @ApiProperty({ description: 'Opaque client-encrypted payload.' })
@@ -28,10 +31,12 @@ export class MessageEnvelopeDto {
 export class SendMessageDto {
   @ApiProperty()
   @IsUUID()
+  @Transform(toLowerCase)
   senderDeviceId!: string;
 
   @ApiProperty()
   @IsUUID()
+  @Transform(toLowerCase)
   recipientUserId!: string;
 
   @ApiProperty()
@@ -52,6 +57,7 @@ export class SendMessageDto {
   @ApiProperty({ required: false, description: 'ID of the message being replied to (must be in the same thread).' })
   @IsOptional()
   @IsUUID()
+  @Transform(toLowerCase)
   replyToMessageId?: string;
 
   @ApiProperty({
@@ -63,6 +69,7 @@ export class SendMessageDto {
   @IsArray()
   @ArrayMaxSize(10)
   @IsUUID('all', { each: true })
+  @Transform(({ value }: { value: string[] }) => value?.map((v: string) => v.toLowerCase()))
   mediaIds?: string[];
 
   @ApiProperty({ type: [MessageEnvelopeDto] })

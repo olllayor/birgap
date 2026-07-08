@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
   ArrayMaxSize,
   ArrayMinSize,
@@ -15,6 +15,8 @@ import {
 } from 'class-validator';
 import { MessageEnvelopeDto } from './send-message.dto';
 
+const toLowerCase = ({ value }: { value: string }) => value?.toLowerCase();
+
 export class ForwardTargetDto {
   @ApiProperty({ enum: ['direct', 'group'] })
   @IsString()
@@ -24,11 +26,13 @@ export class ForwardTargetDto {
   @ApiProperty({ required: false, description: 'Required when type is "direct".' })
   @IsOptional()
   @IsUUID()
+  @Transform(toLowerCase)
   recipientUserId?: string;
 
   @ApiProperty({ required: false, description: 'Required when type is "group".' })
   @IsOptional()
   @IsUUID()
+  @Transform(toLowerCase)
   groupId?: string;
 
   @ApiProperty({ type: [MessageEnvelopeDto], required: false, description: 'Required when type is "direct".' })
@@ -48,10 +52,12 @@ export class ForwardTargetDto {
 export class ForwardMessageDto {
   @ApiProperty({ description: 'ID of the source message to forward.' })
   @IsUUID()
+  @Transform(toLowerCase)
   sourceMessageId!: string;
 
   @ApiProperty()
   @IsUUID()
+  @Transform(toLowerCase)
   senderDeviceId!: string;
 
   @ApiProperty()

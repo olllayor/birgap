@@ -5,8 +5,14 @@ import { DailyMetricKind } from '@prisma/client';
 
 export class AnalyticsQueryDto {
   @ApiProperty({ enum: DailyMetricKind })
+  @IsOptional()
   @IsEnum(DailyMetricKind)
-  kind!: DailyMetricKind;
+  kind?: DailyMetricKind;
+
+  @ApiProperty({ enum: DailyMetricKind, name: 'metricKind' })
+  @IsOptional()
+  @IsEnum(DailyMetricKind)
+  metricKind?: DailyMetricKind;
 
   @ApiProperty({ required: false, description: 'ISO 8601 start of date range (inclusive). Defaults to 30 days ago.' })
   @IsOptional()

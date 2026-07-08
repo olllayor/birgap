@@ -1,4 +1,4 @@
-import { Controller, Get, Param, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiProperty, ApiTags } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import { IsInt, IsOptional, Max, Min } from 'class-validator';
@@ -6,6 +6,8 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { AuthenticatedUser } from '../common/types/authenticated-user';
 import { DirectThreadsService } from './direct-threads.service';
+import { ThreadMediaQueryDto } from './dto/thread-media-query.dto';
+import { UpdateThreadSettingsDto } from './dto/update-thread-settings.dto';
 
 class ThreadMessagesQueryDto {
   @ApiProperty({ required: false, description: 'Max messages to return (default 50, max 100)' })
@@ -64,5 +66,31 @@ export class DirectThreadsController {
       afterSequence: query.afterSequence,
     });
     return { messages };
+  }
+
+  @Patch(':id/settings')
+  @ApiOperation({ summary: 'Update per-user settings for a direct thread (mute/unmute push)' })
+  async updateThreadSettings(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+    @Body() body: UpdateThreadSettingsDto,
+  ) {
+    return this.directThreadsService.updateThreadSettings(user.userId, id, {
+      muted: body.muted,
+    });
+  }
+
+  @Get(':id/media')
+  @ApiOperation({ summary: 'Get media gallery for a direct thread with cursor pagination' })
+  async getThreadMedia(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+    @Query() query: ThreadMediaQueryDto,
+  ) {
+    return this.directThreadsService.getThreadMedia(user.userId, id, {
+      type: query.type,
+      cursor: query.cursor,
+      limit: query.limit,
+    });
   }
 }

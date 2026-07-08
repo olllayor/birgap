@@ -27,7 +27,7 @@ export class AdminUsersService {
       throw new NotFoundException('User not found');
     }
 
-    const [filedReports, receivedReports, suspensions] = await Promise.all([
+    const [filedReports, receivedReports, suspensions, devices] = await Promise.all([
       this.prisma.report.findMany({
         where: { reporterUserId: userId },
         orderBy: { createdAt: 'desc' },
@@ -66,9 +66,22 @@ export class AdminUsersService {
           revokedBy: { select: { id: true, username: true } },
         },
       }),
+      this.prisma.device.findMany({
+        where: { userId },
+        orderBy: { lastSeenAt: 'desc' },
+        select: {
+          id: true,
+          platform: true,
+          displayName: true,
+          active: true,
+          pushActive: true,
+          lastSeenAt: true,
+          createdAt: true,
+        },
+      }),
     ]);
 
-    return { user, filedReports, receivedReports, suspensions };
+    return { user, filedReports, receivedReports, suspensions, devices };
   }
 
   async search(query: { q?: string; role?: string; status?: string; limit?: number }) {
@@ -100,8 +113,15 @@ export class AdminUsersService {
         strikeCount: true,
         lastStrikeAt: true,
         createdAt: true,
+        _count: {
+          select: { devices: { where: { active: true } } },
+        },
       },
     });
-    return { items };
+    const mapped = items.map(({ _count, ...rest }) => ({
+      ...rest,
+      deviceCount: _count.devices,
+    }));
+    return { items: mapped };
   }
 }

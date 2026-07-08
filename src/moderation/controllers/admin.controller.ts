@@ -18,7 +18,7 @@ import {
 import { UserRole } from '@prisma/client';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { AdminRoleGuard } from '../guards/admin-role.guard';
-import { RequireRole } from '../../common/decorators/require-role.decorator';
+import { AllowAnyRole, RequireRole } from '../../common/decorators/require-role.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { AuthenticatedUser } from '../../common/types/authenticated-user';
 import { ReportsService } from '../services/reports.service';
@@ -52,6 +52,7 @@ export class AdminController {
     private readonly rollup: DailyMetricsRollupService,
   ) {}
 
+  @AllowAnyRole()
   @Get('me')
   @ApiOperation({ summary: 'Return the authenticated admin actor identity.' })
   @ApiResponse({ status: 200, description: 'Returns { userId, role }.' })
@@ -197,7 +198,8 @@ export class AdminController {
   @Get('analytics')
   @ApiOperation({ summary: 'Time series for one DailyMetricKind, with optional dimension filter.' })
   analyticsQuery(@Query() query: AnalyticsQueryDto) {
-    return this.analytics.series(query);
+    const kind = query.kind ?? query.metricKind;
+    return this.analytics.series({ ...query, kind });
   }
 
   @RequireRole(UserRole.ADMIN)

@@ -1,4 +1,4 @@
-import { CallHandler, ExecutionContext, Injectable, Logger, NestInterceptor } from '@nestjs/common';
+import { CallHandler, ExecutionContext, HttpException, Injectable, Logger, NestInterceptor } from '@nestjs/common';
 import { Observable, tap } from 'rxjs';
 
 @Injectable()
@@ -18,8 +18,12 @@ export class HttpLoggingInterceptor implements NestInterceptor {
           this.logger.log(`${method} ${url} ${res.statusCode} ${Date.now() - start}ms user=${userId}`);
         },
         error: (err) => {
+          // The exception filter has not run yet, so res.statusCode still holds
+          // the framework default (200/201). Derive the real status from the
+          // exception instead of logging a misleading success code.
+          const status = err instanceof HttpException ? err.getStatus() : 500;
           this.logger.error(
-            `${method} ${url} ${res.statusCode} ${Date.now() - start}ms user=${userId} err=${err.message}`,
+            `${method} ${url} ${status} ${Date.now() - start}ms user=${userId} err=${err.message}`,
           );
         },
       }),

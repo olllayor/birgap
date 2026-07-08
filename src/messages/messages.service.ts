@@ -18,9 +18,11 @@ import { DeleteMessageDto, DeleteMessageScope } from './dto/delete-message.dto';
 import { EditMessageDto } from './dto/edit-message.dto';
 import { ForwardMessageDto, ForwardTargetDto } from './dto/forward-message.dto';
 import { MarkAllReadDto } from './dto/mark-all-read.dto';
+import { PinMessageDto } from './dto/pin-message.dto';
 import { SendMessageDto } from './dto/send-message.dto';
 import { MediaService } from './media.service';
 import { canonicalDirectPair } from './thread.util';
+import { retryOnUniqueViolation } from '../common/utils/prisma-retry.util';
 
 @Injectable()
 export class MessagesService {
@@ -50,6 +52,21 @@ export class MessagesService {
       return this.serializeMessage(existing);
     }
 
+    // Blocking (either direction) forbids direct sends. One indexed query,
+    // checked before opening the transaction.
+    const block = await this.prisma.userBlock.findFirst({
+      where: {
+        OR: [
+          { blockerId: senderUserId, blockedId: dto.recipientUserId },
+          { blockerId: dto.recipientUserId, blockedId: senderUserId },
+        ],
+      },
+      select: { id: true },
+    });
+    if (block) {
+      throw new ForbiddenException('Cannot send message: this user is blocked');
+    }
+
     try {
       const created = await this.prisma.$transaction(async (tx) => {
         const allDevices = await tx.device.findMany({
@@ -66,7 +83,9 @@ export class MessagesService {
 
         const senderDevice = allDevices.find((d) => d.id === dto.senderDeviceId);
         if (!senderDevice || senderDevice.userId !== senderUserId) {
-          throw new ForbiddenException('Sender device is not active for this user');
+          throw new ForbiddenException(
+            `Sender device ${dto.senderDeviceId} is not active for this user`,
+          );
         }
         if (senderUserId === dto.recipientUserId) {
           throw new BadRequestException('Recipient must be another user');
@@ -454,7 +473,10 @@ export class MessagesService {
       return existing.id;
     }
 
-    const message = await this.prisma.$transaction(async (tx) => {
+    // Retry on @@unique([groupId, threadSequence]) conflicts: concurrent group
+    // writes can read the same max sequence and collide (there was no retry here,
+    // so a forward simply 500'd and was lost).
+    const message = await retryOnUniqueViolation(() => this.prisma.$transaction(async (tx) => {
       const existingTx = await tx.message.findUnique({
         where: {
           senderDeviceId_idempotencyKey: {
@@ -491,7 +513,7 @@ export class MessagesService {
       }
 
       return created;
-    });
+    }), 'threadSequence');
 
     await this.fanoutQueue.add('fanout', {
       messageId: message.id,
@@ -513,11 +535,28 @@ export class MessagesService {
   async getPending(userId: string, deviceId: string, after?: string, limit = 50) {
     await this.assertActiveDevice(userId, deviceId);
 
+    // envelopeSequence is a Postgres autoincrement: the value is assigned at
+    // INSERT but only becomes visible at COMMIT. So a higher sequence can commit
+    // before a lower one, and a client that advanced its `after` watermark past
+    // the higher value would skip the lower one forever once it commits — a
+    // permanently lost message under concurrent sends to the same device.
+    //
+    // Guard against that WITHOUT a schema change: an envelope that was skipped
+    // this way is still PENDING (it can't have been delivered/acked, since the
+    // client never saw it). So always re-include PENDING envelopes regardless of
+    // the watermark; only DELIVERED envelopes are gated by `after` (the client
+    // already has those). Once a re-surfaced envelope is acked it flips to
+    // DELIVERED/READ and drops out.
     const envelopes = await this.prisma.messageEnvelope.findMany({
       where: {
         recipientDeviceId: deviceId,
-        status: { in: ['PENDING', 'DELIVERED'] },
-        ...(after && { envelopeSequence: { gt: BigInt(after) } }),
+        OR: [
+          { status: 'PENDING' },
+          {
+            status: 'DELIVERED',
+            ...(after && { envelopeSequence: { gt: BigInt(after) } }),
+          },
+        ],
       },
       orderBy: { envelopeSequence: 'asc' },
       take: limit,
@@ -541,7 +580,10 @@ export class MessagesService {
 
     return {
       deviceId,
-      envelopes,
+      envelopes: envelopes.map((e) => ({
+        ...e,
+        envelopeSequence: e.envelopeSequence.toString(),
+      })),
       hasMore: envelopes.length === limit,
     };
   }
@@ -559,13 +601,21 @@ export class MessagesService {
     const now = new Date();
 
     if (dto.status === 'READ') {
+      // Reading on one device marks the message read across all of this user's
+      // devices. Fill deliveredAt only where it is still null — the previous code
+      // wrote this device's deliveredAt onto every sibling envelope, clobbering
+      // their real per-device delivery timestamps.
+      await this.prisma.messageEnvelope.updateMany({
+        where: { messageId, recipientUserId: userId, deliveredAt: null },
+        data: { deliveredAt: now },
+      });
       await this.prisma.messageEnvelope.updateMany({
         where: {
           messageId,
           recipientUserId: userId,
           status: { not: 'READ' },
         },
-        data: { status: 'READ', readAt: now, deliveredAt: envelope.deliveredAt ?? now },
+        data: { status: 'READ', readAt: now },
       });
     }
 
@@ -621,7 +671,14 @@ export class MessagesService {
       }
     }
 
-    return updated;
+    return {
+      messageId: updated.messageId,
+      recipientDeviceId: updated.recipientDeviceId,
+      status: updated.status,
+      deliveredAt: updated.deliveredAt?.toISOString() ?? null,
+      readAt: updated.readAt?.toISOString() ?? null,
+      envelopeSequence: updated.envelopeSequence.toString(),
+    };
   }
 
   async markAllRead(userId: string, dto: MarkAllReadDto) {
@@ -658,35 +715,57 @@ export class MessagesService {
 
     const take = Math.min(limit, 500);
 
+    const messageInclude = {
+      message: {
+        select: {
+          id: true,
+          threadId: true,
+          groupId: true,
+          senderUserId: true,
+          senderDeviceId: true,
+          threadSequence: true,
+          contentType: true,
+          replyToMessageId: true,
+          forwarded: true,
+          createdAt: true,
+          deletedAt: true,
+          editedAt: true,
+        },
+      },
+    } as const;
+
+    // Bulk status writes (markAllRead, edit fan-out) stamp many envelopes with the
+    // exact same updatedAt. Paging with a strict `updatedAt > since` cursor would
+    // skip every same-timestamp row that fell past the page boundary. Order by
+    // (updatedAt, id) for determinism, then never split a same-timestamp group
+    // across a page: after slicing, pull the rest of the boundary timestamp's rows
+    // so the client's next `since = boundaryTs` (strict gt) can't drop anything.
     const envelopes = await this.prisma.messageEnvelope.findMany({
       where: {
         recipientDeviceId: deviceId,
         updatedAt: { gt: sinceDate },
       },
-      orderBy: { updatedAt: 'asc' },
+      orderBy: [{ updatedAt: 'asc' }, { id: 'asc' }],
       take: take + 1,
-      include: {
-        message: {
-          select: {
-            id: true,
-            threadId: true,
-            groupId: true,
-            senderUserId: true,
-            senderDeviceId: true,
-            threadSequence: true,
-            contentType: true,
-            replyToMessageId: true,
-            forwarded: true,
-            createdAt: true,
-            deletedAt: true,
-            editedAt: true,
-          },
-        },
-      },
+      include: messageInclude,
     });
 
     const hasMore = envelopes.length > take;
     const slicedEnvelopes = hasMore ? envelopes.slice(0, take) : envelopes;
+
+    if (hasMore && slicedEnvelopes.length > 0) {
+      const boundary = slicedEnvelopes[slicedEnvelopes.length - 1];
+      const boundaryRemainder = await this.prisma.messageEnvelope.findMany({
+        where: {
+          recipientDeviceId: deviceId,
+          updatedAt: boundary.updatedAt,
+          id: { gt: boundary.id },
+        },
+        orderBy: { id: 'asc' },
+        include: messageInclude,
+      });
+      slicedEnvelopes.push(...boundaryRemainder);
+    }
 
     const deletedMessages = await this.prisma.message.findMany({
       where: {
@@ -825,13 +904,15 @@ export class MessagesService {
       });
     }
 
-    // Silent push wakeup for offline clients
+    // Silent push wakeup for offline clients. threadId enables the per-user
+    // thread mute filter in PushService (direct threads only; null for groups).
     this.push
       .sendEditWakeup(
         updated.envelopes.map((e) => ({
           recipientDeviceId: e.recipientDeviceId,
           recipientUserId: e.recipientUserId,
         })),
+        updated.threadId,
       )
       .catch((error) => {
         this.events.emit('error', {
@@ -931,13 +1012,14 @@ export class MessagesService {
       });
     }
 
-    // Silent push wakeup for offline clients
+    // Silent push wakeup for offline clients. threadId enables the per-user
+    // thread mute filter in PushService (direct threads only; null for groups).
     const deleteEnvelopes = updated.envelopes.map((e) => ({
       recipientDeviceId: e.recipientDeviceId,
       recipientUserId: e.recipientUserId,
     }));
     this.push
-      .sendDeleteWakeup(deleteEnvelopes)
+      .sendDeleteWakeup(deleteEnvelopes, updated.threadId)
       .catch((error) => {
         this.events.emit('error', {
           message: 'Failed to enqueue delete push wakeup',
@@ -954,6 +1036,138 @@ export class MessagesService {
     });
 
     return { success: true, scope: DeleteMessageScope.FOR_EVERYONE, deletedBy };
+  }
+
+  async pinMessage(userId: string, messageId: string, dto: PinMessageDto) {
+    await this.assertActiveDevice(userId, dto.deviceId);
+    const message = await this.assertMessageAccess(userId, messageId);
+    if (message.deletedAt) {
+      throw new BadRequestException('Cannot pin a deleted message');
+    }
+
+    const threadType = message.threadId ? 'direct' : 'group';
+    const threadId = (message.threadId ?? message.groupId) as string;
+
+    // Idempotent: pinning an already-pinned message is a no-op that returns the
+    // existing pin rather than surfacing a unique-constraint error.
+    const pin = await this.prisma.pinnedMessage.upsert({
+      where: { threadType_threadId_messageId: { threadType, threadId, messageId } },
+      update: {},
+      create: { threadType, threadId, messageId, pinnedByUserId: userId },
+    });
+
+    this.emitPinChange('pinned', userId, message, threadType, threadId, pin.pinnedAt);
+    return this.serializePin(pin);
+  }
+
+  async unpinMessage(userId: string, messageId: string, dto: PinMessageDto) {
+    await this.assertActiveDevice(userId, dto.deviceId);
+    const message = await this.assertMessageAccess(userId, messageId);
+
+    const threadType = message.threadId ? 'direct' : 'group';
+    const threadId = (message.threadId ?? message.groupId) as string;
+
+    const deleted = await this.prisma.pinnedMessage.deleteMany({
+      where: { threadType, threadId, messageId },
+    });
+    if (deleted.count === 0) {
+      throw new NotFoundException('Message is not pinned');
+    }
+
+    this.emitPinChange('unpinned', userId, message, threadType, threadId, new Date());
+    return { success: true };
+  }
+
+  async listPinned(
+    userId: string,
+    threadType: 'direct' | 'group',
+    threadId: string,
+    deviceId: string,
+  ) {
+    await this.assertActiveDevice(userId, deviceId);
+    await this.assertThreadAccess(userId, threadType, threadId);
+
+    const pins = await this.prisma.pinnedMessage.findMany({
+      where: { threadType, threadId },
+      orderBy: { pinnedAt: 'desc' },
+    });
+
+    return { threadType, threadId, pins: pins.map((p) => this.serializePin(p)) };
+  }
+
+  private serializePin(pin: {
+    id: string;
+    threadType: string;
+    threadId: string;
+    messageId: string;
+    pinnedByUserId: string;
+    pinnedAt: Date;
+  }) {
+    return {
+      id: pin.id,
+      threadType: pin.threadType,
+      threadId: pin.threadId,
+      messageId: pin.messageId,
+      pinnedByUserId: pin.pinnedByUserId,
+      pinnedAt: pin.pinnedAt.toISOString(),
+    };
+  }
+
+  // Relays a pin/unpin to the other participants, mirroring the message.deleted
+  // convention: direct threads carry an explicit targetUserIds list (actor
+  // excluded), groups fan out to members via the gateway.
+  private emitPinChange(
+    action: 'pinned' | 'unpinned',
+    actorUserId: string,
+    message: { id: string; threadId: string | null; groupId: string | null; thread?: { userAId: string; userBId: string } | null },
+    threadType: 'direct' | 'group',
+    threadId: string,
+    at: Date,
+  ) {
+    const base = {
+      action,
+      messageId: message.id,
+      threadType,
+      threadId,
+      groupId: message.groupId ?? null,
+      pinnedByUserId: actorUserId,
+      at: at.toISOString(),
+    };
+
+    if (threadType === 'direct') {
+      const targetUserIds = [message.thread?.userAId, message.thread?.userBId].filter(
+        (id): id is string => !!id && id !== actorUserId,
+      );
+      this.events.emit('message.pin', { ...base, targetUserIds });
+    } else {
+      this.events.emit('message.pin.group', base);
+    }
+  }
+
+  private async assertThreadAccess(
+    userId: string,
+    threadType: 'direct' | 'group',
+    threadId: string,
+  ) {
+    if (threadType === 'direct') {
+      const thread = await this.prisma.directThread.findUnique({
+        where: { id: threadId },
+        select: { userAId: true, userBId: true },
+      });
+      if (!thread) {
+        throw new NotFoundException('Thread not found');
+      }
+      if (thread.userAId !== userId && thread.userBId !== userId) {
+        throw new ForbiddenException('Not a participant in this thread');
+      }
+    } else {
+      const member = await this.prisma.groupMember.findUnique({
+        where: { groupId_userId: { groupId: threadId, userId } },
+      });
+      if (!member) {
+        throw new ForbiddenException('Not a member of this group');
+      }
+    }
   }
 
   private async assertActiveDevice(userId: string, deviceId: string) {
@@ -1027,7 +1241,10 @@ export class MessagesService {
       replyToMessageId: message.replyToMessageId ?? null,
       forwarded: message.forwarded ?? false,
       createdAt: message.createdAt,
-      envelopes: message.envelopes,
+      envelopes: message.envelopes.map((e: any) => ({
+        ...e,
+        envelopeSequence: e.envelopeSequence?.toString() ?? e.envelopeSequence,
+      })),
       media: message.media ?? [],
     };
   }
