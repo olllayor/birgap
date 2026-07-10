@@ -68,6 +68,30 @@ export class AuthService {
       }
 
       if (existing.revokedAt) {
+        // Grace window: a token re-presented within a few seconds of its own
+        // rotation is almost always a legitimate retry whose new-token response
+        // was lost — a dropped network reply, an app-launch race, or two
+        // concurrent requests that both 401'd and refreshed. Treating that as
+        // theft and nuking every session is a false positive that logs real
+        // users out constantly. Real token theft shows up as a replay LONG
+        // after rotation, so a short window separates the two safely. Within
+        // the window we issue a fresh pair in the same family instead of
+        // revoking; reuse detection still fires on any later replay.
+        const graceMs =
+          (this.config.get<number>('REFRESH_REUSE_GRACE_SECONDS') ?? 15) * 1000;
+        const sinceRevokeMs = Date.now() - existing.revokedAt.getTime();
+
+        if (sinceRevokeMs <= graceMs) {
+          const fam = await this.prisma.refreshToken.findUnique({
+            where: { tokenHash },
+            select: { userId: true, familyId: true },
+          });
+          if (fam) {
+            await this.throwIfSuspended(fam.userId);
+            return this.issueTokenPair(fam.userId, meta, fam.familyId);
+          }
+        }
+
         await this.revokeTokenFamily(tokenHash);
         throw new UnauthorizedException('Refresh token has been reused — all sessions revoked');
       }

@@ -1,4 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
+import { Type } from 'class-transformer';
 import { IsInt, IsOptional, IsString, IsUUID, Max, Min } from 'class-validator';
 
 export class PendingQueryDto {
@@ -13,6 +14,7 @@ export class PendingQueryDto {
 
   @ApiProperty({ required: false, default: 50 })
   @IsOptional()
+  @Type(() => Number)
   @IsInt()
   @Min(1)
   @Max(200)
