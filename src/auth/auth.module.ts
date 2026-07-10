@@ -1,6 +1,5 @@
 import { Global, Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
-import { BullModule } from '@nestjs/bullmq';
 import { JwtModule } from '@nestjs/jwt';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
@@ -18,9 +17,6 @@ import { SmsModule } from '../sms/sms.module';
         secret: config.getOrThrow<string>('JWT_ACCESS_SECRET'),
         signOptions: { expiresIn: config.get<string>('JWT_ACCESS_TTL') ?? '15m' },
       }),
-    }),
-    BullModule.registerQueue({
-      name: 'sms-otp',
     }),
     SmsModule,
   ],
