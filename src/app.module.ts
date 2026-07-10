@@ -30,6 +30,9 @@ import { MediaCleanupService } from './common/tasks/media-cleanup.service';
 import { MediaCleanupProcessor } from './common/tasks/media-cleanup.processor';
 import { UnreadModule } from './unread/unread.module';
 import { ReactionsModule } from './reactions/reactions.module';
+import { CallsModule } from './calls/calls.module';
+import { ContactsModule } from './contacts/contacts.module';
+import { FoldersModule } from './folders/folders.module';
 
 @Module({
   imports: [
@@ -104,6 +107,9 @@ import { ReactionsModule } from './reactions/reactions.module';
     UnreadModule,
     ReactionsModule,
     ModerationModule,
+    CallsModule,
+    ContactsModule,
+    FoldersModule,
   ],
   providers: [
     PruneService,

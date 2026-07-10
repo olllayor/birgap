@@ -253,6 +253,23 @@ export class DirectThreadsService {
     return { threadId, isMuted: opts.muted };
   }
 
+  // Saved Messages: the user's self-thread (userAId === userBId). Idempotent
+  // upsert so the settings-hub "Saved" entry always resolves to a thread.
+  async getOrCreateSavedThread(userId: string) {
+    const thread = await this.prisma.directThread.upsert({
+      where: { userAId_userBId: { userAId: userId, userBId: userId } },
+      update: {},
+      create: { userAId: userId, userBId: userId },
+    });
+    return {
+      id: thread.id,
+      isSelf: true,
+      latestSequence: thread.latestSequence,
+      createdAt: thread.createdAt.toISOString(),
+      updatedAt: thread.updatedAt.toISOString(),
+    };
+  }
+
   async findByUser(userId: string) {
     return this.prisma.directThread.findMany({
       where: {
@@ -330,6 +347,8 @@ export class DirectThreadsService {
 
       return {
         id: thread.id,
+        // Self-thread renders as "Saved Messages" client-side.
+        isSelf: thread.userAId === thread.userBId,
         otherUserId,
         otherUserName: otherUser?.username ?? otherUser?.phoneMasked ?? 'Unknown',
         otherUserAvatarUrl: otherUser?.profileAvatarUrl ?? null,

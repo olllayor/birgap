@@ -52,19 +52,26 @@ export class MessagesService {
       return this.serializeMessage(existing);
     }
 
+    // Saved Messages: recipient === sender creates/uses the self-thread
+    // (userAId === userBId). No block check, no unread counting; envelopes
+    // fan out to the sender's other devices only.
+    const isSelfThread = senderUserId === dto.recipientUserId;
+
     // Blocking (either direction) forbids direct sends. One indexed query,
     // checked before opening the transaction.
-    const block = await this.prisma.userBlock.findFirst({
-      where: {
-        OR: [
-          { blockerId: senderUserId, blockedId: dto.recipientUserId },
-          { blockerId: dto.recipientUserId, blockedId: senderUserId },
-        ],
-      },
-      select: { id: true },
-    });
-    if (block) {
-      throw new ForbiddenException('Cannot send message: this user is blocked');
+    if (!isSelfThread) {
+      const block = await this.prisma.userBlock.findFirst({
+        where: {
+          OR: [
+            { blockerId: senderUserId, blockedId: dto.recipientUserId },
+            { blockerId: dto.recipientUserId, blockedId: senderUserId },
+          ],
+        },
+        select: { id: true },
+      });
+      if (block) {
+        throw new ForbiddenException('Cannot send message: this user is blocked');
+      }
     }
 
     try {
@@ -87,12 +94,14 @@ export class MessagesService {
             `Sender device ${dto.senderDeviceId} is not active for this user`,
           );
         }
-        if (senderUserId === dto.recipientUserId) {
-          throw new BadRequestException('Recipient must be another user');
-        }
 
-        const recipientDevices = allDevices.filter((d) => d.userId === dto.recipientUserId);
-        if (recipientDevices.length === 0) {
+        // Self-thread: "recipients" are the sender's other devices. A
+        // single-device user has none to require, but the DTO demands at least
+        // one envelope — the sender's own device is allowed for that case.
+        const recipientDevices = isSelfThread
+          ? allDevices.filter((d) => d.userId === senderUserId && d.id !== dto.senderDeviceId)
+          : allDevices.filter((d) => d.userId === dto.recipientUserId);
+        if (!isSelfThread && recipientDevices.length === 0) {
           throw new NotFoundException('Recipient has no active devices');
         }
 
@@ -100,7 +109,11 @@ export class MessagesService {
           allDevices.filter((d) => d.userId === senderUserId && d.id !== dto.senderDeviceId).map((d) => d.id),
         );
         const recipientDeviceIds = new Set(recipientDevices.map((device) => device.id));
-        const allowedDeviceIds = new Set([...recipientDeviceIds, ...senderSyncDeviceIds]);
+        const allowedDeviceIds = new Set([
+          ...recipientDeviceIds,
+          ...senderSyncDeviceIds,
+          ...(isSelfThread ? [dto.senderDeviceId] : []),
+        ]);
         const envelopeDeviceIds = new Set(dto.envelopes.map((envelope) => envelope.recipientDeviceId));
 
         for (const deviceId of recipientDeviceIds) {
@@ -183,7 +196,8 @@ export class MessagesService {
 
       this.events.emit('message.created', this.serializeMessage(created));
 
-      if (created.threadId) {
+      // Saved Messages never count as unread — it's the user's own notepad.
+      if (created.threadId && !isSelfThread) {
         this.unreadService
           .enqueueRecalc({
             userId: dto.recipientUserId,

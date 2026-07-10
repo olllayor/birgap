@@ -30,7 +30,14 @@ export class PushNotificationProcessor extends WorkerHost {
 
   async process(job: Job<PushNotificationJobData>): Promise<void> {
     const provider = this.config.get<string>('PUSH_PROVIDER') ?? 'logger';
-    const { type, envelopes } = job.data;
+    const { type, envelopes, call } = job.data;
+
+    if (type === 'incoming_call' || type === 'missed_call') {
+      if (provider === 'fcm') {
+        return this.sendCallFcmWakeup(envelopes, type, call);
+      }
+      return this.logCallWakeup(envelopes, type);
+    }
 
     if (provider === 'fcm') {
       if (type === 'edit' || type === 'delete') {
@@ -43,6 +50,101 @@ export class PushNotificationProcessor extends WorkerHost {
       return this.logSilentWakeup(envelopes, type);
     }
     return this.logWakeup(envelopes);
+  }
+
+  private async logCallWakeup(
+    envelopes: PushNotificationJobData['envelopes'],
+    type: 'incoming_call' | 'missed_call',
+  ): Promise<void> {
+    const deviceIds = [...new Set(envelopes.map((e) => e.recipientDeviceId))];
+    const devices = await this.prisma.device.findMany({
+      where: {
+        id: { in: deviceIds },
+        active: true,
+        pushToken: { not: null },
+        user: { status: 'ACTIVE' },
+      },
+      select: { id: true, userId: true, pushPlatform: true },
+    });
+    for (const device of devices) {
+      this.logger.log(
+        `Call push (${type}) queued user=${device.userId} device=${device.id} platform=${device.pushPlatform ?? 'unknown'}`,
+      );
+    }
+  }
+
+  private async sendCallFcmWakeup(
+    envelopes: PushNotificationJobData['envelopes'],
+    type: 'incoming_call' | 'missed_call',
+    call: PushNotificationJobData['call'],
+  ): Promise<void> {
+    if (!this.fcm.isReady()) {
+      this.logger.warn('FCM provider is not initialized; falling back to logger');
+      return this.logCallWakeup(envelopes, type);
+    }
+
+    const deviceIds = [...new Set(envelopes.map((e) => e.recipientDeviceId))];
+    const devices = await this.prisma.device.findMany({
+      where: {
+        id: { in: deviceIds },
+        active: true,
+        pushToken: { not: null },
+        user: { status: 'ACTIVE' },
+      },
+      select: { id: true, userId: true, pushToken: true, pushPlatform: true },
+    });
+
+    const candidates = devices.filter((d) => d.pushPlatform === 'FCM' && d.pushToken);
+    if (candidates.length === 0) {
+      return;
+    }
+
+    // Devices with a live socket already got the gateway event; only wake the rest.
+    const fcmDevices = await this.filterOnlineDevices(candidates);
+    if (fcmDevices.length === 0) {
+      return;
+    }
+
+    const tokens = fcmDevices.map((d) => d.pushToken as string);
+    const message: admin.messaging.MulticastMessage = {
+      data: {
+        type,
+        callId: call?.callId ?? '',
+        callerUserId: call?.callerUserId ?? '',
+        callType: call?.callType ?? '',
+      },
+      tokens,
+      android: { priority: 'high' },
+      // 'background' keeps the push silent at the OS level; the app renders the
+      // ring UI / missed-call notification itself from the data payload.
+      apns: SILENT_APNS,
+    };
+
+    const response = await this.fcm.getMessaging().sendEachForMulticast(message);
+
+    if (response.failureCount > 0) {
+      const staleTokens: string[] = [];
+      response.responses.forEach((res, index) => {
+        if (!res.success && res.error) {
+          this.logger.warn(
+            `Call FCM send failed for device=${fcmDevices[index].id}: ${res.error.code} ${res.error.message}`,
+          );
+          if (
+            res.error.code === 'messaging/registration-token-not-registered' ||
+            res.error.code === 'messaging/invalid-registration-token'
+          ) {
+            staleTokens.push(tokens[index]);
+          }
+        }
+      });
+      if (staleTokens.length > 0) {
+        await this.prisma.device.updateMany({
+          where: { pushToken: { in: staleTokens } },
+          data: { pushToken: null, pushPlatform: null, pushActive: false },
+        });
+        this.logger.log(`Cleared ${staleTokens.length} stale FCM tokens`);
+      }
+    }
   }
 
   private async logWakeup(

@@ -11,6 +11,7 @@ import {
 } from '@nestjs/websockets';
 import { Redis } from 'ioredis';
 import { Server, Socket } from 'socket.io';
+import { CallsService } from '../calls/calls.service';
 import { PushService } from '../push/push.service';
 import { RedisService } from '../redis/redis.service';
 import { TypingDto } from './dto/typing.dto';
@@ -89,6 +90,7 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
     private readonly redis: RedisService,
     private readonly push: PushService,
     private readonly prisma: PrismaService,
+    private readonly calls: CallsService,
   ) {}
 
   async onModuleInit() {
@@ -261,15 +263,16 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
     userId: string,
     payload: Record<string, unknown>,
   ) {
-    const peerIds = await this.getDirectPeerIds(userId);
+    const peerIds = await this.getPresencePeerIds(userId);
     for (const peerId of peerIds) {
       this.server.to(`user:${peerId}`).emit(event, payload);
     }
   }
 
-  // All users sharing a DirectThread with this user, via a short-lived Redis
-  // cache (60s) with Prisma as fallback — same pattern as group member lookup.
-  private async getDirectPeerIds(userId: string): Promise<string[]> {
+  // Everyone who should see this user's presence: DirectThread peers plus
+  // co-members of shared groups. Short-lived Redis cache (60s) with Prisma as
+  // fallback — same pattern as group member lookup.
+  private async getPresencePeerIds(userId: string): Promise<string[]> {
     try {
       const cached = await this.redis.getThreadPeerIds(userId);
       if (cached) {
@@ -280,12 +283,21 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
         `Could not read thread peers from Redis for user ${userId}: ${error instanceof Error ? error.message : error}`,
       );
     }
-    const threads = await this.prisma.directThread.findMany({
-      where: { OR: [{ userAId: userId }, { userBId: userId }] },
-      select: { userAId: true, userBId: true },
-    });
+    const [threads, coMembers] = await Promise.all([
+      this.prisma.directThread.findMany({
+        where: { OR: [{ userAId: userId }, { userBId: userId }] },
+        select: { userAId: true, userBId: true },
+      }),
+      this.prisma.groupMember.findMany({
+        where: { group: { members: { some: { userId } } } },
+        select: { userId: true },
+      }),
+    ]);
     const peerIds = Array.from(
-      new Set(threads.map((t) => (t.userAId === userId ? t.userBId : t.userAId))),
+      new Set([
+        ...threads.map((t) => (t.userAId === userId ? t.userBId : t.userAId)),
+        ...coMembers.map((m) => m.userId),
+      ]),
     ).filter((id) => id !== userId);
     this.redis.setThreadPeerIds(userId, peerIds).catch(() => {});
     return peerIds;
@@ -369,6 +381,149 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
         deviceId: client.data.deviceId,
       });
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // WebRTC call signaling. The server relays SDP/ICE blobs verbatim (they are
+  // opaque, never persisted) and owns the call state machine via CallsService.
+  // Handler return values are socket.io acks: { ok, callId?, error? }.
+  // ---------------------------------------------------------------------------
+
+  @SubscribeMessage('call.initiate')
+  async handleCallInitiate(
+    @ConnectedSocket() client: AuthenticatedSocket,
+    @MessageBody() body: { calleeUserId?: string; callType?: string; sdpOffer?: unknown },
+  ) {
+    if (!client.data.userId || !client.data.deviceId) {
+      return { ok: false, error: 'UNAUTHENTICATED' };
+    }
+    if (!body?.calleeUserId || !body?.sdpOffer || (body.callType !== 'AUDIO' && body.callType !== 'VIDEO')) {
+      return { ok: false, error: 'INVALID_PAYLOAD' };
+    }
+    try {
+      const call = await this.calls.initiate(client.data.userId, {
+        calleeUserId: body.calleeUserId,
+        callType: body.callType,
+        sdpOffer: body.sdpOffer,
+      });
+      this.server.to(`user:${body.calleeUserId}`).emit('call.incoming', {
+        callId: call.id,
+        callerUserId: client.data.userId,
+        callerDeviceId: client.data.deviceId,
+        callType: call.type,
+        sdpOffer: body.sdpOffer,
+        startedAt: call.startedAt.toISOString(),
+      });
+      return { ok: true, callId: call.id };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : 'CALL_FAILED' };
+    }
+  }
+
+  @SubscribeMessage('call.answer')
+  async handleCallAnswer(
+    @ConnectedSocket() client: AuthenticatedSocket,
+    @MessageBody() body: { callId?: string; sdpAnswer?: unknown },
+  ) {
+    if (!client.data.userId || !client.data.deviceId) {
+      return { ok: false, error: 'UNAUTHENTICATED' };
+    }
+    if (!body?.callId || !body?.sdpAnswer) {
+      return { ok: false, error: 'INVALID_PAYLOAD' };
+    }
+    try {
+      const call = await this.calls.answer(body.callId, client.data.userId);
+      this.server.to(`user:${call.callerId}`).emit('call.answered', {
+        callId: call.id,
+        calleeDeviceId: client.data.deviceId,
+        sdpAnswer: body.sdpAnswer,
+      });
+      // Stop the ring on the callee's other devices (client ignores own deviceId).
+      this.server.to(`user:${call.calleeId}`).emit('call.taken', {
+        callId: call.id,
+        answeredByDeviceId: client.data.deviceId,
+      });
+      return { ok: true, callId: call.id };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : 'CALL_FAILED' };
+    }
+  }
+
+  @SubscribeMessage('call.decline')
+  async handleCallDecline(
+    @ConnectedSocket() client: AuthenticatedSocket,
+    @MessageBody() body: { callId?: string },
+  ) {
+    if (!client.data.userId || !body?.callId) {
+      return { ok: false, error: 'INVALID_PAYLOAD' };
+    }
+    try {
+      const call = await this.calls.decline(body.callId, client.data.userId);
+      const ended = { callId: call.id, reason: 'declined', endedAt: call.endedAt?.toISOString() ?? null };
+      this.server.to(`user:${call.callerId}`).emit('call.ended', ended);
+      this.server.to(`user:${call.calleeId}`).emit('call.ended', ended);
+      return { ok: true, callId: call.id };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : 'CALL_FAILED' };
+    }
+  }
+
+  @SubscribeMessage('call.end')
+  async handleCallEnd(
+    @ConnectedSocket() client: AuthenticatedSocket,
+    @MessageBody() body: { callId?: string; reason?: string },
+  ) {
+    if (!client.data.userId || !body?.callId) {
+      return { ok: false, error: 'INVALID_PAYLOAD' };
+    }
+    try {
+      const call = await this.calls.end(body.callId, client.data.userId, body.reason);
+      const ended = {
+        callId: call.id,
+        reason: call.endReason ?? 'hangup',
+        status: call.status,
+        endedAt: call.endedAt?.toISOString() ?? null,
+      };
+      this.server.to(`user:${call.callerId}`).emit('call.ended', ended);
+      this.server.to(`user:${call.calleeId}`).emit('call.ended', ended);
+      return { ok: true, callId: call.id };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : 'CALL_FAILED' };
+    }
+  }
+
+  @SubscribeMessage('call.ice')
+  async handleCallIce(
+    @ConnectedSocket() client: AuthenticatedSocket,
+    @MessageBody() body: { callId?: string; candidate?: unknown },
+  ) {
+    if (!client.data.userId || !body?.callId || body?.candidate === undefined) {
+      return { ok: false, error: 'INVALID_PAYLOAD' };
+    }
+    try {
+      const call = await this.calls.getOwnCall(body.callId, client.data.userId);
+      if (call.status !== 'RINGING' && call.status !== 'ACTIVE') {
+        return { ok: false, error: 'CALL_NOT_LIVE' };
+      }
+      const otherUserId = this.calls.otherParticipant(call, client.data.userId);
+      this.server.to(`user:${otherUserId}`).emit('call.ice', {
+        callId: call.id,
+        candidate: body.candidate,
+        fromUserId: client.data.userId,
+        fromDeviceId: client.data.deviceId,
+      });
+      return { ok: true };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : 'CALL_FAILED' };
+    }
+  }
+
+  // Ring timeout fired in CallsService (call flipped to MISSED there).
+  @OnEvent('call.timeout')
+  onCallTimeout(payload: { callId: string; callerUserId: string; calleeUserId: string }) {
+    const ended = { callId: payload.callId, reason: 'timeout', endedAt: new Date().toISOString() };
+    this.server.to(`user:${payload.callerUserId}`).emit('call.ended', ended);
+    this.server.to(`user:${payload.calleeUserId}`).emit('call.ended', ended);
   }
 
   @OnEvent('message.created')

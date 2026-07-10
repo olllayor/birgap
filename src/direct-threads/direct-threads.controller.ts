@@ -44,6 +44,13 @@ export class DirectThreadsController {
     return { threads };
   }
 
+  // Static route: must stay above the ':id' param routes.
+  @Get('saved')
+  @ApiOperation({ summary: 'Get (or lazily create) the Saved Messages self-thread' })
+  async getSavedThread(@CurrentUser() user: AuthenticatedUser) {
+    return this.directThreadsService.getOrCreateSavedThread(user.userId);
+  }
+
   @Get(':id')
   @ApiOperation({ summary: 'Get a direct thread by ID with resolved user details' })
   async getThread(

@@ -300,6 +300,33 @@ export class UsersService {
     }
   }
 
+  // Exact-match username resolve (QR codes / birgap://user/<username> deep
+  // links). Case-insensitive, ACTIVE users only, same public subset as search.
+  async resolveByUsername(usernameRaw: string) {
+    const username = (usernameRaw ?? '').trim().replace(/^@/, '');
+    if (!USERNAME_REGEX.test(username)) {
+      throw new BadRequestException('Invalid username');
+    }
+    const user = await this.prisma.user.findFirst({
+      where: {
+        username: { equals: username, mode: 'insensitive' },
+        status: 'ACTIVE',
+      },
+      select: {
+        id: true,
+        username: true,
+        profileAvatarUrl: true,
+        encryptedProfile: true,
+        profileKeyHash: true,
+        createdAt: true,
+      },
+    });
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+    return user;
+  }
+
   async searchByUsername(usernameQuery: string, currentUserId?: string) {
     // Telegram-style: a leading @ is part of how people write usernames, not
     // part of the username itself.

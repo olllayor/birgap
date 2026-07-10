@@ -15,6 +15,16 @@ import { UpdateProfileDto } from './dto/profile.dto';
 export class UsersController {
   constructor(private readonly usersService: UsersService) {}
 
+  // Declared first: 'by-username' must never be captured as a ':userId' by the
+  // param routes below (e.g. GET :userId/profile would swallow
+  // /users/by-username/profile for a user literally named "profile").
+  // Exact-match resolve for QR / birgap://user/<username> deep links.
+  @Throttle({ default: { limit: 60, ttl: 60_000 } })
+  @Get('by-username/:username')
+  resolveByUsername(@Param('username') username: string) {
+    return this.usersService.resolveByUsername(username);
+  }
+
   @Get(':userId/devices/key-bundles')
   getDeviceKeyBundles(@Param('userId') userId: string) {
     return this.usersService.getDeviceKeyBundles(userId);

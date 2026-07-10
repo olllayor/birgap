@@ -44,6 +44,25 @@ export class PushService {
   }
 
   /**
+   * Call wakeups (incoming_call rings offline devices, missed_call surfaces a
+   * notification). Deliberately NOT filtered by thread mute — a muted text
+   * thread must not silence phone calls.
+   */
+  async sendCallWakeup(
+    envelopes: PushEnvelopeTarget[],
+    call: { kind: 'incoming_call' | 'missed_call'; callId: string; callerUserId: string; callType: string },
+  ) {
+    if (envelopes.length === 0) {
+      return;
+    }
+    await this.pushQueue.add('send-call-wakeup', {
+      type: call.kind,
+      envelopes,
+      call: { callId: call.callId, callerUserId: call.callerUserId, callType: call.callType },
+    });
+  }
+
+  /**
    * Drops targets whose recipient has an active mute (mutedUntil in the
    * future) on the given direct thread. Fails open: if the settings lookup
    * errors, every target keeps its push — a broken filter must degrade to
