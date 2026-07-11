@@ -10,223 +10,226 @@ import { VerifyOtpDto } from './dto/verify-otp.dto';
 import { OtpService } from './otp.service';
 
 interface SessionMeta {
-  userAgent?: string;
-  ip?: string;
+	userAgent?: string;
+	ip?: string;
 }
 
 @Injectable()
 export class AuthService {
-  private readonly logger = new Logger(AuthService.name);
+	private readonly logger = new Logger(AuthService.name);
 
-  constructor(
-    private readonly prisma: PrismaService,
-    private readonly jwtService: JwtService,
-    private readonly config: ConfigService,
-    private readonly otpService: OtpService,
-  ) {}
+	constructor(
+		private readonly prisma: PrismaService,
+		private readonly jwtService: JwtService,
+		private readonly config: ConfigService,
+		private readonly otpService: OtpService,
+	) {}
 
-  async requestOtp(dto: RequestOtpDto) {
-    const phone = normalizePhone(dto.phone);
-    const result = await this.otpService.requestOtp(phone);
-    return {
-      phone: maskPhone(phone),
-      mode: this.config.get<string>('OTP_MODE'),
-      ...result,
-    };
-  }
+	async requestOtp(dto: RequestOtpDto) {
+		const phone = normalizePhone(dto.phone);
+		const result = await this.otpService.requestOtp(phone);
+		return {
+			phone: maskPhone(phone),
+			...result,
+		};
+	}
 
-  async verifyOtp(dto: VerifyOtpDto, meta?: SessionMeta) {
-    const phone = normalizePhone(dto.phone);
-    const pepper = this.config.getOrThrow<string>('PHONE_HASH_PEPPER');
-    const phoneHash = hmacSha256(phone, pepper);
+	async verifyOtp(dto: VerifyOtpDto, meta?: SessionMeta) {
+		const phone = normalizePhone(dto.phone);
+		const pepper = this.config.getOrThrow<string>('PHONE_HASH_PEPPER');
+		const phoneHash = hmacSha256(phone, pepper);
 
-    await this.otpService.verifyOtp(phone, dto.code);
+		await this.otpService.verifyOtp(phone, dto.code);
 
-    const user = await this.findOrCreateUser(phone, phoneHash);
+		const user = await this.findOrCreateUser(phone, phoneHash);
 
-    await this.throwIfSuspended(user.id);
+		await this.throwIfSuspended(user.id);
 
-    return this.issueTokenPair(user.id, meta);
-  }
+		return this.issueTokenPair(user.id, meta);
+	}
 
-  async refresh(refreshToken: string, meta?: SessionMeta) {
-    const tokenHash = sha256(refreshToken);
+	async refresh(refreshToken: string, meta?: SessionMeta) {
+		const tokenHash = sha256(refreshToken);
 
-    const updated = await this.prisma.refreshToken.updateMany({
-      where: { tokenHash, revokedAt: null },
-      data: { revokedAt: new Date() },
-    });
+		const updated = await this.prisma.refreshToken.updateMany({
+			where: { tokenHash, revokedAt: null },
+			data: { revokedAt: new Date() },
+		});
 
-    if (updated.count === 0) {
-      const existing = await this.prisma.refreshToken.findUnique({
-        where: { tokenHash },
-        select: { revokedAt: true, expiresAt: true },
-      });
+		if (updated.count === 0) {
+			const existing = await this.prisma.refreshToken.findUnique({
+				where: { tokenHash },
+				select: { revokedAt: true, expiresAt: true },
+			});
 
-      if (!existing || existing.expiresAt <= new Date()) {
-        throw new UnauthorizedException('Refresh token is invalid');
-      }
+			if (!existing || existing.expiresAt <= new Date()) {
+				throw new UnauthorizedException('Refresh token is invalid');
+			}
 
-      if (existing.revokedAt) {
-        // Grace window: a token re-presented within a few seconds of its own
-        // rotation is almost always a legitimate retry whose new-token response
-        // was lost — a dropped network reply, an app-launch race, or two
-        // concurrent requests that both 401'd and refreshed. Treating that as
-        // theft and nuking every session is a false positive that logs real
-        // users out constantly. Real token theft shows up as a replay LONG
-        // after rotation, so a short window separates the two safely. Within
-        // the window we issue a fresh pair in the same family instead of
-        // revoking; reuse detection still fires on any later replay.
-        const graceMs =
-          (this.config.get<number>('REFRESH_REUSE_GRACE_SECONDS') ?? 15) * 1000;
-        const sinceRevokeMs = Date.now() - existing.revokedAt.getTime();
+			if (existing.revokedAt) {
+				// Grace window: a token re-presented within a few seconds of its own
+				// rotation is almost always a legitimate retry whose new-token response
+				// was lost — a dropped network reply, an app-launch race, or two
+				// concurrent requests that both 401'd and refreshed. Treating that as
+				// theft and nuking every session is a false positive that logs real
+				// users out constantly. Real token theft shows up as a replay LONG
+				// after rotation, so a short window separates the two safely. Within
+				// the window we issue a fresh pair in the same family instead of
+				// revoking; reuse detection still fires on any later replay.
+				const graceMs = (this.config.get<number>('REFRESH_REUSE_GRACE_SECONDS') ?? 15) * 1000;
+				const sinceRevokeMs = Date.now() - existing.revokedAt.getTime();
 
-        if (sinceRevokeMs <= graceMs) {
-          const fam = await this.prisma.refreshToken.findUnique({
-            where: { tokenHash },
-            select: { userId: true, familyId: true },
-          });
-          if (fam) {
-            await this.throwIfSuspended(fam.userId);
-            return this.issueTokenPair(fam.userId, meta, fam.familyId);
-          }
-        }
+				if (sinceRevokeMs <= graceMs) {
+					const fam = await this.prisma.refreshToken.findUnique({
+						where: { tokenHash },
+						select: { userId: true, familyId: true },
+					});
+					if (fam) {
+						await this.throwIfSuspended(fam.userId);
+						return this.issueTokenPair(fam.userId, meta, fam.familyId);
+					}
+				}
 
-        await this.revokeTokenFamily(tokenHash);
-        throw new UnauthorizedException('Refresh token has been reused — all sessions revoked');
-      }
+				await this.revokeTokenFamily(tokenHash);
+				throw new UnauthorizedException('Refresh token has been reused — all sessions revoked');
+			}
 
-      throw new UnauthorizedException('Refresh token is invalid');
-    }
+			throw new UnauthorizedException('Refresh token is invalid');
+		}
 
-    const session = await this.prisma.refreshToken.findUnique({
-      where: { tokenHash },
-      select: { userId: true, familyId: true, user: { select: { status: true } } },
-    });
+		const session = await this.prisma.refreshToken.findUnique({
+			where: { tokenHash },
+			select: { userId: true, familyId: true, user: { select: { status: true } } },
+		});
 
-    if (!session) {
-      throw new UnauthorizedException('Refresh token is invalid');
-    }
+		if (!session) {
+			throw new UnauthorizedException('Refresh token is invalid');
+		}
 
-    await this.throwIfSuspended(session.userId);
+		await this.throwIfSuspended(session.userId);
 
-    return this.issueTokenPair(session.userId, meta, session.familyId);
-  }
+		return this.issueTokenPair(session.userId, meta, session.familyId);
+	}
 
-  async logout(user: AuthenticatedUser, refreshToken?: string) {
-    if (refreshToken) {
-      await this.prisma.refreshToken.updateMany({
-        where: {
-          tokenHash: sha256(refreshToken),
-          userId: user.userId,
-          revokedAt: null,
-        },
-        data: { revokedAt: new Date() },
-      });
-      return;
-    }
+	async logout(user: AuthenticatedUser, refreshToken?: string, deviceId?: string) {
+		await this.prisma.$transaction(async (tx) => {
+			if (refreshToken) {
+				await tx.refreshToken.updateMany({
+					where: {
+						tokenHash: sha256(refreshToken),
+						userId: user.userId,
+						revokedAt: null,
+					},
+					data: { revokedAt: new Date() },
+				});
+			} else {
+				await tx.refreshToken.updateMany({
+					where: { id: user.sessionId, userId: user.userId, revokedAt: null },
+					data: { revokedAt: new Date() },
+				});
+			}
 
-    await this.prisma.refreshToken.updateMany({
-      where: { id: user.sessionId, userId: user.userId, revokedAt: null },
-      data: { revokedAt: new Date() },
-    });
-  }
+			if (deviceId) {
+				await tx.device.updateMany({
+					where: { id: deviceId, userId: user.userId },
+					data: { active: false, pushActive: false },
+				});
+			}
+		});
+	}
 
-  private async throwIfSuspended(userId: string): Promise<void> {
-    const activeSuspension = await this.prisma.userSuspension.findFirst({
-      where: {
-        userId,
-        revokedAt: null,
-        OR: [
-          { expiresAt: null },
-          { expiresAt: { gt: new Date() } },
-        ],
-      },
-      orderBy: { suspendedAt: 'desc' },
-      select: { reason: true, suspendedAt: true, expiresAt: true },
-    });
+	private async throwIfSuspended(userId: string): Promise<void> {
+		const activeSuspension = await this.prisma.userSuspension.findFirst({
+			where: {
+				userId,
+				revokedAt: null,
+				OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
+			},
+			orderBy: { suspendedAt: 'desc' },
+			select: { reason: true, suspendedAt: true, expiresAt: true },
+		});
 
-    if (activeSuspension) {
-      throw new AccountSuspendedException({
-        reason: activeSuspension.reason,
-        suspendedAt: activeSuspension.suspendedAt.toISOString(),
-        expiresAt: activeSuspension.expiresAt ? activeSuspension.expiresAt.toISOString() : null,
-        appealUrl: this.config.get<string>('SUSPENSION_APPEAL_URL') ?? null,
-      });
-    }
-  }
+		if (activeSuspension) {
+			throw new AccountSuspendedException({
+				reason: activeSuspension.reason,
+				suspendedAt: activeSuspension.suspendedAt.toISOString(),
+				expiresAt: activeSuspension.expiresAt ? activeSuspension.expiresAt.toISOString() : null,
+				appealUrl: this.config.get<string>('SUSPENSION_APPEAL_URL') ?? null,
+			});
+		}
+	}
 
-  private async findOrCreateUser(phone: string, phoneHash: string) {
-    const existing = await this.prisma.user.findUnique({
-      where: { phoneHash },
-      select: { id: true },
-    });
+	private async findOrCreateUser(phone: string, phoneHash: string) {
+		const existing = await this.prisma.user.findUnique({
+			where: { phoneHash },
+			select: { id: true },
+		});
 
-    if (existing) {
-      return existing;
-    }
+		if (existing) {
+			return existing;
+		}
 
-    const legacyHash = sha256(phone);
-    const legacyUser = await this.prisma.user.findUnique({
-      where: { phoneHash: legacyHash },
-      select: { id: true },
-    });
+		const legacyHash = sha256(phone);
+		const legacyUser = await this.prisma.user.findUnique({
+			where: { phoneHash: legacyHash },
+			select: { id: true },
+		});
 
-    if (legacyUser) {
-      await this.prisma.user.update({
-        where: { id: legacyUser.id },
-        data: { phoneHash },
-      });
-      return legacyUser;
-    }
+		if (legacyUser) {
+			await this.prisma.user.update({
+				where: { id: legacyUser.id },
+				data: { phoneHash },
+			});
+			return legacyUser;
+		}
 
-    return this.prisma.user.create({
-      data: {
-        phoneHash,
-        phoneMasked: maskPhone(phone),
-      },
-      select: { id: true },
-    });
-  }
+		return this.prisma.user.create({
+			data: {
+				phoneHash,
+				phoneMasked: maskPhone(phone),
+			},
+			select: { id: true },
+		});
+	}
 
-  private async revokeTokenFamily(tokenHash: string) {
-    const token = await this.prisma.refreshToken.findUnique({
-      where: { tokenHash },
-      select: { familyId: true },
-    });
+	private async revokeTokenFamily(tokenHash: string) {
+		const token = await this.prisma.refreshToken.findUnique({
+			where: { tokenHash },
+			select: { familyId: true },
+		});
 
-    if (token) {
-      await this.prisma.refreshToken.updateMany({
-        where: { familyId: token.familyId, revokedAt: null },
-        data: { revokedAt: new Date() },
-      });
-    }
-  }
+		if (token) {
+			await this.prisma.refreshToken.updateMany({
+				where: { familyId: token.familyId, revokedAt: null },
+				data: { revokedAt: new Date() },
+			});
+		}
+	}
 
-  private async issueTokenPair(userId: string, meta?: SessionMeta, familyId?: string) {
-    const refreshToken = randomToken(48);
-    const refreshTokenTtlDays = this.config.get<number>('REFRESH_TOKEN_TTL_DAYS') ?? 30;
+	private async issueTokenPair(userId: string, meta?: SessionMeta, familyId?: string) {
+		const refreshToken = randomToken(48);
+		const refreshTokenTtlDays = this.config.get<number>('REFRESH_TOKEN_TTL_DAYS') ?? 30;
 
-    const session = await this.prisma.refreshToken.create({
-      data: {
-        userId,
-        tokenHash: sha256(refreshToken),
-        familyId: familyId ?? randomToken(32),
-        expiresAt: addDays(new Date(), refreshTokenTtlDays),
-        userAgent: meta?.userAgent ?? null,
-        ipAddress: meta?.ip ?? null,
-      },
-    });
+		const session = await this.prisma.refreshToken.create({
+			data: {
+				userId,
+				tokenHash: sha256(refreshToken),
+				familyId: familyId ?? randomToken(32),
+				expiresAt: addDays(new Date(), refreshTokenTtlDays),
+				userAgent: meta?.userAgent ?? null,
+				ipAddress: meta?.ip ?? null,
+			},
+		});
 
-    const accessToken = await this.jwtService.signAsync({
-      sub: userId,
-      sid: session.id,
-    });
+		const accessToken = await this.jwtService.signAsync({
+			sub: userId,
+			sid: session.id,
+		});
 
-    return {
-      user: { id: userId },
-      accessToken,
-      refreshToken,
-    };
-  }
+		return {
+			user: { id: userId },
+			accessToken,
+			refreshToken,
+		};
+	}
 }

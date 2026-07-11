@@ -29,6 +29,7 @@ import { MediaCleanupService } from './common/tasks/media-cleanup.service';
 import { MediaCleanupProcessor } from './common/tasks/media-cleanup.processor';
 import { UnreadModule } from './unread/unread.module';
 import { ReactionsModule } from './reactions/reactions.module';
+import { TelegramModule } from './telegram/telegram.module';
 
 @Module({
   imports: [
@@ -102,6 +103,7 @@ import { ReactionsModule } from './reactions/reactions.module';
     UnreadModule,
     ReactionsModule,
     ModerationModule,
+    TelegramModule,
   ],
   providers: [
     PruneService,

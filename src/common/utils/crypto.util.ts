@@ -19,7 +19,11 @@ export function randomDigits(length: number): string {
 }
 
 export function normalizePhone(phone: string) {
-  return phone.trim().replace(/[^\d+]/g, '');
+  // Canonicalize to E.164 with a single leading '+'. Telegram delivers contact
+  // numbers without the '+' while the app sends them with it — stripping to
+  // digits and re-prefixing guarantees both sides hash to the same value.
+  const digits = phone.replace(/\D/g, '');
+  return digits ? `+${digits}` : '';
 }
 
 export function maskPhone(phone: string) {

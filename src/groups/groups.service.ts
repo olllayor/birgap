@@ -46,6 +46,24 @@ export class GroupsService {
     return group;
   }
 
+  /// Any member may update the metadata blob (not just admins): the blob is
+  /// where clients keep the E2EE group key wrapped per member device, and any
+  /// member must be able to add wraps for a peer's newly registered device.
+  async updateGroupMetadata(userId: string, groupId: string, encryptedMetadata: unknown) {
+    const member = await this.prisma.groupMember.findUnique({
+      where: { groupId_userId: { groupId, userId } },
+    });
+    if (!member) {
+      throw new ForbiddenException('Not a member of this group');
+    }
+
+    return this.prisma.group.update({
+      where: { id: groupId },
+      data: { encryptedMetadata: encryptedMetadata as Prisma.InputJsonValue },
+      include: { members: true },
+    });
+  }
+
   async addMembers(userId: string, groupId: string, memberIds: string[]) {
     await this.assertGroupAdmin(userId, groupId);
 

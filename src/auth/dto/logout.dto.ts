@@ -7,4 +7,12 @@ export class LogoutDto {
   @IsString()
   @MinLength(20)
   refreshToken?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Device to tear down with this logout. Deactivated in the same transaction as token revocation.',
+  })
+  @IsOptional()
+  @IsString()
+  deviceId?: string;
 }

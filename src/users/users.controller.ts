@@ -22,7 +22,7 @@ export class UsersController {
 
   @Post('sync')
   syncContacts(@Body() dto: SyncContactsDto) {
-    return this.usersService.syncContacts(dto.phoneHashes);
+    return this.usersService.syncContacts(dto.phoneHashes ?? [], dto.phones ?? []);
   }
 
   @Patch('profile')

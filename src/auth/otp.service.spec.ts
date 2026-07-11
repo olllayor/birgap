@@ -4,13 +4,15 @@ import { BadRequestException } from '@nestjs/common';
 import { OtpService } from './otp.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { OtpStatus } from '@prisma/client';
+import { TELEGRAM_OTP_QUEUE } from '../telegram/telegram.tokens';
 
 describe('OtpService', () => {
   let service: OtpService;
-  let mockSmsQueue: { add: jest.Mock };
+  let mockTelegramQueue: { add: jest.Mock };
 
   let mockActiveOtp: unknown = null;
   let mockAttemptsSum = 0;
+  let mockTelegramLink: unknown = { id: 'link-1' };
 
   const mockOtpModel = {
     findFirst: jest.fn().mockImplementation(() => mockActiveOtp),
@@ -21,14 +23,20 @@ describe('OtpService', () => {
     ),
   };
 
+  const mockTelegramLinkModel = {
+    findUnique: jest.fn().mockImplementation(() => mockTelegramLink),
+  };
+
   beforeEach(async () => {
     mockActiveOtp = null;
     mockAttemptsSum = 0;
+    mockTelegramLink = { id: 'link-1' };
     mockOtpModel.findFirst.mockClear();
     mockOtpModel.create.mockClear();
     mockOtpModel.update.mockClear();
     mockOtpModel.aggregate.mockClear();
-    mockSmsQueue = { add: jest.fn().mockResolvedValue({ id: 'job-1' }) };
+    mockTelegramLinkModel.findUnique.mockClear();
+    mockTelegramQueue = { add: jest.fn().mockResolvedValue({ id: 'job-1' }) };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -37,11 +45,12 @@ describe('OtpService', () => {
           provide: PrismaService,
           useValue: {
             otp: mockOtpModel,
+            telegramLink: mockTelegramLinkModel,
             smsReport: { create: jest.fn() },
           },
         },
         { provide: ConfigService, useValue: { get: jest.fn((key: string) => key === 'PHONE_HASH_PEPPER' ? 'test-pepper' : undefined), getOrThrow: jest.fn((key: string) => { if (key === 'PHONE_HASH_PEPPER') return 'test-pepper'; throw new Error(`Missing config: ${key}`); }) } },
-        { provide: 'BullQueue_sms-otp', useValue: mockSmsQueue },
+        { provide: `BullQueue_${TELEGRAM_OTP_QUEUE}`, useValue: mockTelegramQueue },
       ],
     }).compile();
 
@@ -53,7 +62,7 @@ describe('OtpService', () => {
   });
 
   describe('requestOtp', () => {
-    it('should enqueue OTP and return success immediately', async () => {
+    it('should enqueue OTP to the Telegram queue and return success immediately', async () => {
       mockActiveOtp = null;
       mockOtpModel.create.mockResolvedValue({ id: '1', code: '123456' });
 
@@ -61,11 +70,19 @@ describe('OtpService', () => {
 
       expect(result.success).toBe(true);
       expect(mockOtpModel.create).toHaveBeenCalled();
-      expect(mockSmsQueue.add).toHaveBeenCalledWith('send-otp', {
+      expect(mockTelegramQueue.add).toHaveBeenCalledWith('send-otp', {
         phoneHash: expect.any(String),
         phone: '+998901234567',
         code: expect.any(String),
       });
+    });
+
+    it('should reject with TELEGRAM_LINK_REQUIRED when the phone has no Telegram link', async () => {
+      mockTelegramLink = null;
+
+      await expect(service.requestOtp('+998901234567')).rejects.toThrow(BadRequestException);
+      expect(mockOtpModel.create).not.toHaveBeenCalled();
+      expect(mockTelegramQueue.add).not.toHaveBeenCalled();
     });
 
     it('should not resend within cooldown period', async () => {
@@ -82,13 +99,13 @@ describe('OtpService', () => {
       expect(result.success).toBe(true);
       expect(result.message).toContain('already sent');
       expect(mockOtpModel.create).not.toHaveBeenCalled();
-      expect(mockSmsQueue.add).not.toHaveBeenCalled();
+      expect(mockTelegramQueue.add).not.toHaveBeenCalled();
     });
 
     it('should propagate queue errors when Redis is unreachable', async () => {
       mockActiveOtp = null;
       mockOtpModel.create.mockResolvedValue({ id: '1' });
-      mockSmsQueue.add.mockRejectedValue(new Error('Redis connection refused'));
+      mockTelegramQueue.add.mockRejectedValue(new Error('Redis connection refused'));
 
       await expect(service.requestOtp('+998901234567')).rejects.toThrow(
         'Redis connection refused',

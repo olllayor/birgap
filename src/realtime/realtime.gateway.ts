@@ -376,6 +376,43 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
     }
   }
 
+  // Both edit paths emit PER DEVICE with that device's refreshed ciphertext —
+  // a flat user-room broadcast without ciphertext can't be applied by clients
+  // (an already-READ envelope never resurfaces via /messages/pending, so the
+  // socket event is the only delivery of the edited content). This also
+  // reaches the sender's OTHER devices, which user-room broadcasts that
+  // filtered out the sender entirely used to miss.
+  private emitEditedPerDevice(payload: {
+    messageId: string;
+    threadId: string | null;
+    groupId: string | null;
+    senderUserId: string;
+    senderDeviceId: string;
+    editedAt: string;
+    envelopes: Array<{ recipientDeviceId: string; ciphertext: unknown }>;
+  }) {
+    const summary = {
+      id: payload.messageId,
+      threadId: payload.threadId ?? null,
+      groupId: payload.groupId ?? null,
+      senderUserId: payload.senderUserId,
+      senderDeviceId: payload.senderDeviceId,
+      editedAt: payload.editedAt,
+    };
+    for (const envelope of payload.envelopes ?? []) {
+      this.server.to(`device:${envelope.recipientDeviceId}`).emit('message.edited', {
+        messageId: payload.messageId,
+        threadId: payload.threadId ?? null,
+        groupId: payload.groupId ?? null,
+        senderUserId: payload.senderUserId,
+        senderDeviceId: payload.senderDeviceId,
+        editedAt: payload.editedAt,
+        ciphertext: envelope.ciphertext,
+        message: summary,
+      });
+    }
+  }
+
   @OnEvent('message.edited')
   onMessageEdited(payload: {
     messageId: string;
@@ -385,56 +422,26 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
     senderDeviceId: string;
     editedAt: string;
     targetUserIds: string[];
-    envelopes: unknown[];
+    envelopes: Array<{ recipientDeviceId: string; ciphertext: unknown }>;
   }) {
-    const eventPayload = {
-      messageId: payload.messageId,
-      threadId: payload.threadId ?? null,
-      groupId: payload.groupId ?? null,
-      senderUserId: payload.senderUserId,
-      senderDeviceId: payload.senderDeviceId,
-      editedAt: payload.editedAt,
-    };
-    for (const targetUserId of payload.targetUserIds) {
-      this.server.to(`user:${targetUserId}`).emit('message.edited', eventPayload);
-    }
+    this.emitEditedPerDevice(payload);
   }
 
   @OnEvent('message.edited.group')
-  async onGroupMessageEdited(payload: {
-    messageId: string;
+  onGroupMessageEdited(payload: {
+    // The group edit fanout processor emits `id`, not `messageId`.
+    id: string;
     threadId: string | null;
     groupId: string | null;
     senderUserId: string;
     senderDeviceId: string;
     editedAt: string;
-    envelopes: unknown[];
+    envelopes: Array<{ recipientDeviceId: string; ciphertext: unknown }>;
   }) {
     if (!payload.groupId) {
       return;
     }
-    let memberIds = await this.redis.getGroupMemberIds(payload.groupId);
-    if (!memberIds) {
-      const members = await this.prisma.groupMember.findMany({
-        where: { groupId: payload.groupId },
-        select: { userId: true },
-      });
-      memberIds = members.map((m) => m.userId);
-      this.redis.setGroupMemberIds(payload.groupId, memberIds).catch(() => {});
-    }
-    const eventPayload = {
-      messageId: payload.messageId,
-      threadId: payload.threadId ?? null,
-      groupId: payload.groupId ?? null,
-      senderUserId: payload.senderUserId,
-      senderDeviceId: payload.senderDeviceId,
-      editedAt: payload.editedAt,
-    };
-    for (const userId of memberIds) {
-      if (userId !== payload.senderUserId) {
-        this.server.to(`user:${userId}`).emit('message.edited', eventPayload);
-      }
-    }
+    this.emitEditedPerDevice({ ...payload, messageId: payload.id });
   }
 
   async onModuleDestroy() {

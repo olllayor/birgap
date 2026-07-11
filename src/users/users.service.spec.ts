@@ -1,6 +1,12 @@
 import { NotFoundException, BadRequestException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
 import { UsersService } from './users.service';
+import { hmacSha256 } from '../common/utils/crypto.util';
+
+const config = {
+  getOrThrow: jest.fn().mockReturnValue('test-pepper'),
+} as unknown as ConfigService;
 
 describe('UsersService', () => {
   it('returns signed prekey with null one-time prekey when OTPKs are exhausted', async () => {
@@ -32,7 +38,7 @@ describe('UsersService', () => {
       },
       $transaction: jest.fn((callback: (tx: Record<string, unknown>) => unknown) => callback(tx as Record<string, unknown>)),
     };
-    const service = new UsersService(prisma as unknown as PrismaService);
+    const service = new UsersService(prisma as unknown as PrismaService, config);
 
     await expect(service.getDeviceKeyBundles('user-1')).resolves.toMatchObject({
       userId: 'user-1',
@@ -51,7 +57,7 @@ describe('UsersService', () => {
     const prisma = {
       device: { findMany: jest.fn().mockResolvedValue([]) },
     };
-    const service = new UsersService(prisma as unknown as PrismaService);
+    const service = new UsersService(prisma as unknown as PrismaService, config);
 
     await expect(service.getDeviceKeyBundles('user-1')).rejects.toBeInstanceOf(NotFoundException);
   });
@@ -64,9 +70,11 @@ describe('UsersService', () => {
       const prisma = {
         user: { findMany: jest.fn().mockResolvedValue(matchedUsers) },
       };
-      const service = new UsersService(prisma as unknown as PrismaService);
+      const service = new UsersService(prisma as unknown as PrismaService, config);
 
-      await expect(service.syncContacts(['hash-1', 'hash-2'])).resolves.toEqual(matchedUsers);
+      await expect(service.syncContacts(['hash-1', 'hash-2'])).resolves.toEqual([
+        { ...matchedUsers[0], matchedPhone: null },
+      ]);
       expect(prisma.user.findMany).toHaveBeenCalledWith({
         where: {
           phoneHash: { in: ['hash-1', 'hash-2'] },
@@ -84,9 +92,35 @@ describe('UsersService', () => {
     });
 
     it('throws BadRequestException when batch exceeds 1000 phone hashes', async () => {
-      const service = new UsersService({} as unknown as PrismaService);
+      const service = new UsersService({} as unknown as PrismaService, config);
       const phoneHashes = Array.from({ length: 1001 }, (_, i) => `hash-${i}`);
       await expect(service.syncContacts(phoneHashes)).rejects.toThrow(BadRequestException);
+    });
+
+    it('normalizes and peppers raw phones server-side', async () => {
+      const prisma = {
+        user: { findMany: jest.fn().mockResolvedValue([]) },
+      };
+      const service = new UsersService(prisma as unknown as PrismaService, config);
+
+      await service.syncContacts([], ['+1 (234) 567-890']);
+      expect(prisma.user.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            phoneHash: { in: [hmacSha256('+1234567890', 'test-pepper')] },
+          }),
+        }),
+      );
+    });
+
+    it('returns empty without querying when no hashes or phones given', async () => {
+      const prisma = {
+        user: { findMany: jest.fn() },
+      };
+      const service = new UsersService(prisma as unknown as PrismaService, config);
+
+      await expect(service.syncContacts([], [])).resolves.toEqual([]);
+      expect(prisma.user.findMany).not.toHaveBeenCalled();
     });
   });
 
@@ -99,7 +133,7 @@ describe('UsersService', () => {
           update: jest.fn().mockResolvedValue(mockUpdated),
         },
       };
-      const service = new UsersService(prisma as unknown as PrismaService);
+      const service = new UsersService(prisma as unknown as PrismaService, config);
 
       await expect(
         service.updateProfile('user-1', { username: 'bob_new', profileAvatarUrl: 'http://avatar' })
@@ -135,7 +169,7 @@ describe('UsersService', () => {
           findFirst: jest.fn().mockResolvedValue({ id: 'user-2', username: 'bob_new' }),
         },
       };
-      const service = new UsersService(prisma as unknown as PrismaService);
+      const service = new UsersService(prisma as unknown as PrismaService, config);
 
       await expect(
         service.updateProfile('user-1', { username: 'bob_new' })
@@ -153,7 +187,7 @@ describe('UsersService', () => {
           update: jest.fn().mockRejectedValue(prismaError),
         },
       };
-      const service = new UsersService(prisma as unknown as PrismaService);
+      const service = new UsersService(prisma as unknown as PrismaService, config);
 
       await expect(
         service.updateProfile('user-1', { username: 'race_condition_user' })
@@ -163,7 +197,7 @@ describe('UsersService', () => {
 
   describe('searchByUsername', () => {
     it('throws if search query is less than 3 characters', async () => {
-      const service = new UsersService({} as unknown as PrismaService);
+      const service = new UsersService({} as unknown as PrismaService, config);
       await expect(service.searchByUsername('ab')).rejects.toThrow(BadRequestException);
     });
 
@@ -172,7 +206,7 @@ describe('UsersService', () => {
       const prisma = {
         user: { findMany: jest.fn().mockResolvedValue(mockResult) },
       };
-      const service = new UsersService(prisma as unknown as PrismaService);
+      const service = new UsersService(prisma as unknown as PrismaService, config);
 
       const result = await service.searchByUsername('ali');
       expect(result).toEqual(mockResult);
@@ -198,7 +232,7 @@ describe('UsersService', () => {
       const prisma = {
         user: { findMany: jest.fn().mockResolvedValue(mockResult) },
       };
-      const service = new UsersService(prisma as unknown as PrismaService);
+      const service = new UsersService(prisma as unknown as PrismaService, config);
 
       await service.searchByUsername('alice', 'user-1');
       const call = prisma.user.findMany.mock.calls[0][0];
@@ -211,7 +245,7 @@ describe('UsersService', () => {
       const prisma = {
         user: { findMany: jest.fn().mockResolvedValue(mockResult) },
       };
-      const service = new UsersService(prisma as unknown as PrismaService);
+      const service = new UsersService(prisma as unknown as PrismaService, config);
 
       await service.searchByUsername('alice');
       const call = prisma.user.findMany.mock.calls[0][0];
