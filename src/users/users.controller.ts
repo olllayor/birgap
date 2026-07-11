@@ -31,37 +31,8 @@ export class UsersController {
   }
 
   @Post('sync')
-  syncContacts(@CurrentUser() user: AuthenticatedUser, @Body() dto: SyncContactsDto) {
-    return this.usersService.syncContacts(dto.phoneHashes, user.userId);
-  }
-
-  @Get(':userId/presence')
-  getPresence(@Param('userId') userId: string, @CurrentUser() user: AuthenticatedUser) {
-    return this.usersService.getPresence(userId, user.userId);
-  }
-
-  // Two-segment param route: cannot shadow the single-segment static routes
-  // (/users/me, /users/search, /users/username-available, /users/blocked) below.
-  @Get(':userId/profile')
-  getPeerProfile(@Param('userId') userId: string, @CurrentUser() user: AuthenticatedUser) {
-    return this.usersService.getPeerProfile(userId, user.userId);
-  }
-
-  // Static single-segment route: declared before any single-segment param route
-  // could ever be added, alongside /users/me and /users/search.
-  @Get('blocked')
-  listBlockedUsers(@CurrentUser() user: AuthenticatedUser) {
-    return this.usersService.listBlockedUsers(user.userId);
-  }
-
-  @Post(':userId/block')
-  blockUser(@Param('userId') userId: string, @CurrentUser() user: AuthenticatedUser) {
-    return this.usersService.blockUser(user.userId, userId);
-  }
-
-  @Delete(':userId/block')
-  unblockUser(@Param('userId') userId: string, @CurrentUser() user: AuthenticatedUser) {
-    return this.usersService.unblockUser(user.userId, userId);
+  syncContacts(@Body() dto: SyncContactsDto) {
+    return this.usersService.syncContacts(dto.phoneHashes ?? [], dto.phones ?? []);
   }
 
   @Patch('profile')

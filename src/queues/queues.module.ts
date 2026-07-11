@@ -11,7 +11,7 @@ import { QueuesController } from './queues.controller';
       adapter: ExpressAdapter,
     }),
     BullBoardModule.forFeature({
-      name: 'sms-otp',
+      name: 'telegram-otp',
       adapter: BullMQAdapter,
     }),
     BullBoardModule.forFeature({

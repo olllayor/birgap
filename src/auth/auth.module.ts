@@ -5,7 +5,6 @@ import { JwtModule } from '@nestjs/jwt';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { OtpService } from './otp.service';
-import { SmsModule } from '../sms/sms.module';
 
 @Global()
 @Module({
@@ -20,9 +19,8 @@ import { SmsModule } from '../sms/sms.module';
       }),
     }),
     BullModule.registerQueue({
-      name: 'sms-otp',
+      name: 'telegram-otp',
     }),
-    SmsModule,
   ],
   controllers: [AuthController],
   providers: [AuthService, OtpService],

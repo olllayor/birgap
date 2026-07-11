@@ -30,7 +30,6 @@ export class AuthService {
 		const result = await this.otpService.requestOtp(phone);
 		return {
 			phone: maskPhone(phone),
-			mode: this.config.get<string>('OTP_MODE'),
 			...result,
 		};
 	}
@@ -52,38 +51,59 @@ export class AuthService {
 	async refresh(refreshToken: string, meta?: SessionMeta) {
 		const tokenHash = sha256(refreshToken);
 
-		// C9 fix: Atomically revoke the current token. If it was already revoked
-		// (count === 0), immediately revoke the entire family — no grace window.
 		const updated = await this.prisma.refreshToken.updateMany({
 			where: { tokenHash, revokedAt: null },
 			data: { revokedAt: new Date() },
 		});
 
 		if (updated.count === 0) {
-			// Token was already revoked — this is a reuse attempt. Revoke the family.
-			await this.revokeTokenFamily(tokenHash);
-			throw new UnauthorizedException('Refresh token has been reused — all sessions revoked');
+			const existing = await this.prisma.refreshToken.findUnique({
+				where: { tokenHash },
+				select: { revokedAt: true, expiresAt: true },
+			});
+
+			if (!existing || existing.expiresAt <= new Date()) {
+				throw new UnauthorizedException('Refresh token is invalid');
+			}
+
+			if (existing.revokedAt) {
+				// Grace window: a token re-presented within a few seconds of its own
+				// rotation is almost always a legitimate retry whose new-token response
+				// was lost — a dropped network reply, an app-launch race, or two
+				// concurrent requests that both 401'd and refreshed. Treating that as
+				// theft and nuking every session is a false positive that logs real
+				// users out constantly. Real token theft shows up as a replay LONG
+				// after rotation, so a short window separates the two safely. Within
+				// the window we issue a fresh pair in the same family instead of
+				// revoking; reuse detection still fires on any later replay.
+				const graceMs = (this.config.get<number>('REFRESH_REUSE_GRACE_SECONDS') ?? 15) * 1000;
+				const sinceRevokeMs = Date.now() - existing.revokedAt.getTime();
+
+				if (sinceRevokeMs <= graceMs) {
+					const fam = await this.prisma.refreshToken.findUnique({
+						where: { tokenHash },
+						select: { userId: true, familyId: true },
+					});
+					if (fam) {
+						await this.throwIfSuspended(fam.userId);
+						return this.issueTokenPair(fam.userId, meta, fam.familyId);
+					}
+				}
+
+				await this.revokeTokenFamily(tokenHash);
+				throw new UnauthorizedException('Refresh token has been reused — all sessions revoked');
+			}
+
+			throw new UnauthorizedException('Refresh token is invalid');
 		}
 
 		const session = await this.prisma.refreshToken.findUnique({
 			where: { tokenHash },
-			select: {
-				userId: true,
-				familyId: true,
-				expiresAt: true,
-				user: { select: { status: true } },
-			},
+			select: { userId: true, familyId: true, user: { select: { status: true } } },
 		});
 
 		if (!session) {
 			throw new UnauthorizedException('Refresh token is invalid');
-		}
-
-		// The token we just revoked above may have been past its TTL. Reject expired
-		// tokens instead of minting a fresh pair from them — otherwise a refresh token
-		// effectively never expires as long as it is rotated before revocation.
-		if (session.expiresAt.getTime() <= Date.now()) {
-			throw new UnauthorizedException('Refresh token has expired');
 		}
 
 		await this.throwIfSuspended(session.userId);
@@ -91,22 +111,30 @@ export class AuthService {
 		return this.issueTokenPair(session.userId, meta, session.familyId);
 	}
 
-	async logout(user: AuthenticatedUser, refreshToken?: string) {
-		if (refreshToken) {
-			await this.prisma.refreshToken.updateMany({
-				where: {
-					tokenHash: sha256(refreshToken),
-					userId: user.userId,
-					revokedAt: null,
-				},
-				data: { revokedAt: new Date() },
-			});
-			return;
-		}
+	async logout(user: AuthenticatedUser, refreshToken?: string, deviceId?: string) {
+		await this.prisma.$transaction(async (tx) => {
+			if (refreshToken) {
+				await tx.refreshToken.updateMany({
+					where: {
+						tokenHash: sha256(refreshToken),
+						userId: user.userId,
+						revokedAt: null,
+					},
+					data: { revokedAt: new Date() },
+				});
+			} else {
+				await tx.refreshToken.updateMany({
+					where: { id: user.sessionId, userId: user.userId, revokedAt: null },
+					data: { revokedAt: new Date() },
+				});
+			}
 
-		await this.prisma.refreshToken.updateMany({
-			where: { id: user.sessionId, userId: user.userId, revokedAt: null },
-			data: { revokedAt: new Date() },
+			if (deviceId) {
+				await tx.device.updateMany({
+					where: { id: deviceId, userId: user.userId },
+					data: { active: false, pushActive: false },
+				});
+			}
 		});
 	}
 

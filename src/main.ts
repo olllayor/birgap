@@ -15,11 +15,11 @@ import {
   validateInternalApiKey,
 } from './common/guards/internal-api-key.validator';
 
-// Express' JSON.stringify throws on BigInt. Postgres autoincrement columns
-// (e.g. MessageEnvelope.envelopeSequence) surface as BigInt, so serialize them
-// as strings globally — matches how pending/sync already emit the field and
-// prevents any endpoint from 500-ing on an unconverted BigInt.
-(BigInt.prototype as unknown as { toJSON: () => string }).toJSON = function () {
+// Prisma BigInt columns (e.g. MessageEnvelope.envelopeSequence) must survive
+// res.json: JSON.stringify has no default BigInt handling and THROWS, turning
+// any response that includes an envelope row (POST /messages, GET
+// /messages/pending) into a 500. Clients already parse the field as a string.
+(BigInt.prototype as unknown as { toJSON: () => string }).toJSON = function (this: bigint) {
   return this.toString();
 };
 

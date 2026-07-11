@@ -11,9 +11,13 @@ export class DevicesService {
   ) {}
 
   async register(userId: string, dto: RegisterDeviceDto) {
-    // Active-device cap: 0 / unset = unlimited. Env values arrive as strings,
-    // so coerce explicitly (a bare string would break the numeric comparison).
-    const maxActiveDevices = Number(this.config.get('MAX_ACTIVE_DEVICES') ?? 0) || 0;
+    // `?? 3` alone doesn't guard 0 or a non-numeric env value — either would
+    // make `activeCount >= max` always true and reject every registration,
+    // bricking login for all users. Fall back to 3 unless a valid positive
+    // limit is configured.
+    const configuredMax = Number(this.config.get('MAX_ACTIVE_DEVICES'));
+    const maxActiveDevices =
+      Number.isInteger(configuredMax) && configuredMax > 0 ? configuredMax : 3;
 
     const result = await this.prisma.$transaction(async (tx) => {
       const upsertData = {

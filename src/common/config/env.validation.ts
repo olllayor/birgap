@@ -11,15 +11,23 @@ export const envValidationSchema = Joi.object({
   REFRESH_TOKEN_TTL_DAYS: Joi.number().default(30),
   PHONE_HASH_PEPPER: Joi.string().min(16).required(),
   WEBSOCKET_TICKET_TTL_SECONDS: Joi.number().default(60),
-  OTP_MODE: Joi.string().valid('mock', 'sayqal').default('mock'),
-  OTP_MOCK_CODE: Joi.string().default('000000'),
+  // Fixed OTP code override for automated testing/QA — orthogonal to delivery
+  // channel, has no effect on how the code is sent.
+  OTP_MOCK_CODE: Joi.string().optional(),
   OTP_TTL_SECONDS: Joi.number().default(300),
   OTP_RESEND_COOLDOWN_SECONDS: Joi.number().default(120),
   OTP_MAX_ATTEMPTS: Joi.number().default(5),
   OTP_LOCKOUT_SECONDS: Joi.number().default(900),
-  SMS_SAYQAL_URL: Joi.string().uri().optional(),
-  SMS_SAYQAL_SECRET: Joi.string().optional(),
-  SMS_SAYQAL_USERNAME: Joi.string().optional(),
+  // Telegram bot — sole OTP delivery channel.
+  TELEGRAM_BOT_TOKEN: Joi.string().required(),
+  TELEGRAM_BOT_USERNAME: Joi.string().required(),
+  // Public HTTPS base URL Telegram posts updates to (e.g. https://api.birgap.uz).
+  // The webhook is registered at `${TELEGRAM_WEBHOOK_URL}${TELEGRAM_WEBHOOK_PATH}`.
+  TELEGRAM_WEBHOOK_URL: Joi.string().uri().required(),
+  TELEGRAM_WEBHOOK_PATH: Joi.string().default('/telegram/webhook'),
+  // Secret echoed back by Telegram in the X-Telegram-Bot-Api-Secret-Token header
+  // so we can reject forged webhook calls. Generate a random 32+ char string.
+  TELEGRAM_WEBHOOK_SECRET: Joi.string().min(16).required(),
   MAX_ACTIVE_DEVICES: Joi.number().default(3),
   SIGNED_PREKEY_ROTATION_DAYS: Joi.number().default(7),
   PUSH_PROVIDER: Joi.string().valid('logger', 'fcm').default('logger'),

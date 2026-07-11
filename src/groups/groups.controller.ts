@@ -7,6 +7,7 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { AuthenticatedUser } from '../common/types/authenticated-user';
 import { GroupsService } from './groups.service';
 import { CreateGroupDto } from './dto/create-group.dto';
+import { UpdateGroupDto } from './dto/update-group.dto';
 import { SendGroupMessageDto } from './dto/send-group-message.dto';
 import { EditGroupMessageDto } from './dto/edit-group-message.dto';
 
@@ -72,6 +73,16 @@ export class GroupsController {
   @Post()
   createGroup(@CurrentUser() user: AuthenticatedUser, @Body() dto: CreateGroupDto) {
     return this.groupsService.createGroup(user.userId, dto);
+  }
+
+  @Patch(':id')
+  @ApiOperation({ summary: 'Update group encrypted metadata (any member)' })
+  updateGroup(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') groupId: string,
+    @Body() dto: UpdateGroupDto,
+  ) {
+    return this.groupsService.updateGroupMetadata(user.userId, groupId, dto.encryptedMetadata);
   }
 
   @Post(':id/members')

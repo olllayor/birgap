@@ -6,18 +6,19 @@ import { PrismaService } from '../prisma/prisma.service';
 import { OtpStatus } from '@prisma/client';
 import { hmacSha256, normalizePhone, randomDigits } from '../common/utils/crypto.util';
 import { timingSafeEqual } from 'crypto';
-import { SmsOtpJobData } from '../sms/queue/sms-otp-job.interface';
+import { TelegramOtpJobData } from '../telegram/queue/telegram-otp-job.interface';
+import { TELEGRAM_OTP_QUEUE } from '../telegram/telegram.tokens';
 
 @Injectable()
 export class OtpService {
 	private readonly logger = new Logger(OtpService.name);
 
-	constructor(
-		private readonly prisma: PrismaService,
-		private readonly config: ConfigService,
-		@InjectQueue('sms-otp')
-		private readonly smsQueue: Queue<SmsOtpJobData>,
-	) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly config: ConfigService,
+    @InjectQueue(TELEGRAM_OTP_QUEUE)
+    private readonly telegramQueue: Queue<TelegramOtpJobData>,
+  ) {}
 
 	async requestOtp(phone: string) {
 		const normalizedPhone = normalizePhone(phone);
@@ -26,16 +27,38 @@ export class OtpService {
 		const ttlSeconds = this.config.get<number>('OTP_TTL_SECONDS') ?? 300;
 		const cooldownSeconds = this.config.get<number>('OTP_RESEND_COOLDOWN_SECONDS') ?? 120;
 
-		const recentOtp = await this.prisma.otp.findFirst({
-			where: {
-				phoneHash,
-				status: OtpStatus.UNUSED,
-				createdAt: {
-					gte: new Date(Date.now() - cooldownSeconds * 1000),
-				},
-			},
-			orderBy: { createdAt: 'desc' },
-		});
+    const link = await this.prisma.telegramLink.findUnique({
+      where: { phoneHash },
+      select: { id: true },
+    });
+
+    // Dev-only escape hatch: with OTP_MOCK_CODE set (and never in production),
+    // phones without a Telegram link may still log in — the OTP row is created
+    // with the mock code, so testers just type that code. Real Telegram-linked
+    // phones keep the normal delivery path.
+    const mockCode = this.config.get<string>('OTP_MOCK_CODE');
+    const devBypassAllowed = !!mockCode && this.config.get('NODE_ENV') !== 'production';
+
+    if (!link && !devBypassAllowed) {
+      const botUsername = (this.config.get<string>('TELEGRAM_BOT_USERNAME') ?? '').trim().replace(/^@/, '');
+      throw new BadRequestException({
+        statusCode: 400,
+        code: 'TELEGRAM_LINK_REQUIRED',
+        message: 'Open the BirGap Telegram bot and share your phone number to receive login codes.',
+        telegramDeepLink: botUsername ? `https://t.me/${botUsername}?start=link` : undefined,
+      });
+    }
+
+    const recentOtp = await this.prisma.otp.findFirst({
+      where: {
+        phoneHash,
+        status: OtpStatus.UNUSED,
+        createdAt: {
+          gte: new Date(Date.now() - cooldownSeconds * 1000),
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
 
 		if (recentOtp) {
 			const canResendAt = new Date(recentOtp.createdAt.getTime() + cooldownSeconds * 1000);
@@ -59,26 +82,27 @@ export class OtpService {
 				},
 			});
 
-			await this.smsQueue.add('send-otp', {
-				phoneHash,
-				phone: normalizedPhone,
-				code,
-			});
+      // No Telegram link (dev bypass): nothing to deliver to — the tester
+      // types the OTP_MOCK_CODE directly.
+      if (link) {
+        await this.telegramQueue.add('send-otp', { phoneHash, phone: normalizedPhone, code });
+      }
 
-			return {
-				success: true,
-				message: 'OTP sent successfully',
-				expiresInSeconds: ttlSeconds,
-			};
-		} catch (error) {
-			this.logger.error(
-				`Failed to request OTP for ${phoneHash}: ${error instanceof Error ? error.message : String(error)}`,
-			);
-			throw new BadRequestException(
-				`Failed to send OTP: ${error instanceof Error ? error.message : 'Unknown queue error'}`,
-			);
-		}
-	}
+      return {
+        success: true,
+        message: 'OTP sent successfully',
+        channel: 'telegram',
+        expiresInSeconds: ttlSeconds,
+      };
+    } catch (error) {
+      this.logger.error(
+        `Failed to request OTP for ${phoneHash}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      throw new BadRequestException(
+        `Failed to send OTP: ${error instanceof Error ? error.message : 'Unknown queue error'}`,
+      );
+    }
+  }
 
 	async verifyOtp(phone: string, code: string) {
 		const normalizedPhone = normalizePhone(phone);

@@ -2,16 +2,14 @@ import { Injectable, NotFoundException, BadRequestException } from '@nestjs/comm
 import { ConfigService } from '@nestjs/config';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
-import { RedisService } from '../redis/redis.service';
-import { isUniqueViolationOn } from '../common/utils/prisma-retry.util';
-import { UpdateProfileDto, USERNAME_REGEX } from './dto/profile.dto';
+import { UpdateProfileDto } from './dto/profile.dto';
+import { hmacSha256, normalizePhone } from '../common/utils/crypto.util';
 
 @Injectable()
 export class UsersService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
-    private readonly redis: RedisService,
   ) {}
 
   async getDeviceKeyBundles(userId: string) {
@@ -101,14 +99,33 @@ export class UsersService {
     });
   }
 
-  async syncContacts(phoneHashes: string[], currentUserId?: string) {
+  async syncContacts(phoneHashes: string[] = [], phones: string[] = []) {
     const MAX_BATCH = 1000;
-    if (phoneHashes.length > MAX_BATCH) {
+    if (phoneHashes.length + phones.length > MAX_BATCH) {
       throw new BadRequestException(`Contact batch too large. Max ${MAX_BATCH} allowed.`);
     }
-    return this.prisma.user.findMany({
+    // Stored hashes are HMAC-SHA256(E.164, PHONE_HASH_PEPPER) — the pepper is
+    // server-only, so raw phones are hashed here rather than by the client.
+    const pepper = this.config.getOrThrow<string>('PHONE_HASH_PEPPER');
+    const hashes = new Set(phoneHashes);
+    // Remember which submitted phone produced each hash so matches can be
+    // echoed back with the phone the CLIENT sent — that's how it re-joins a
+    // match to the local address-book entry (it can't compute the hash).
+    const hashToPhone = new Map<string, string>();
+    for (const phone of phones) {
+      const normalized = normalizePhone(phone);
+      if (normalized) {
+        const hash = hmacSha256(normalized, pepper);
+        hashes.add(hash);
+        hashToPhone.set(hash, normalized);
+      }
+    }
+    if (hashes.size === 0) {
+      return [];
+    }
+    const users = await this.prisma.user.findMany({
       where: {
-        phoneHash: { in: phoneHashes },
+        phoneHash: { in: [...hashes] },
         status: 'ACTIVE',
         // Don't return the caller as their own "contact".
         ...(currentUserId && { id: { not: currentUserId } }),
@@ -122,6 +139,10 @@ export class UsersService {
         profileKeyHash: true,
       },
     });
+    return users.map((user) => ({
+      ...user,
+      matchedPhone: user.phoneHash ? (hashToPhone.get(user.phoneHash) ?? null) : null,
+    }));
   }
 
   async getMe(userId: string) {

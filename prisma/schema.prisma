@@ -78,6 +78,7 @@ enum OtpStatus {
 enum SmsProvider {
   SAYQAL
   MOCK
+  TELEGRAM
 }
 
 enum SmsType {
@@ -460,6 +461,22 @@ model SmsReport {
   createdAt DateTime     @default(now())
 
   @@index([phoneHash, createdAt])
+}
+
+// Maps a phone (by HMAC hash) to a Telegram chat so OTP codes can be delivered
+// in-app. Populated when a user opens the bot and shares their contact via the
+// /start flow — independent of the User table, since it must exist before a
+// user's first OTP verification creates their account.
+model TelegramLink {
+  id             String   @id @default(uuid()) @db.Uuid
+  phoneHash      String   @unique
+  chatId         BigInt
+  telegramUserId BigInt?
+  username       String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([chatId])
 }
 
 model Group {
